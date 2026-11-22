@@ -56,11 +56,18 @@ impl C989 {
         Ok(out)
     }
 
-    /// Sends a command packet and reads back the keyboard's acknowledgment.
-    fn send_cmd_with_ack(&self, payload: &[u8; 64]) -> Result<[u8; 64], String> {
+    /// Sends a command packet and polls GET_REPORT until the keyboard isn't busy (0xFF).
+    fn send_cmd_with_ack(&self, label: &str, payload: &[u8; 64]) -> Result<[u8; 64], String> {
         self.send_report(payload)?;
-        sleep(Duration::from_millis(20));
-        self.get_report()
+        for attempt in 0..10 {
+            sleep(Duration::from_millis(35));
+            let ack = self.get_report()?;
+            println!("{label} ack (try {attempt}): {:02x?}", &ack[..10]);
+            if ack[0] != 0xff {
+                return Ok(ack);
+            }
+        }
+        Err(format!("{label}: keyboard stayed busy (0xFF)"))
     }
 
     /// Executes the 4-stage Sonix transaction: 04 18 -> 04 <cmd> -> data -> 04 02 -> 04 f0
@@ -69,31 +76,31 @@ impl C989 {
         let mut begin = [0u8; 64];
         begin[0] = 0x04;
         begin[1] = 0x18;
-        self.send_cmd_with_ack(&begin)?;
+        self.send_cmd_with_ack("BEGIN", &begin)?;
 
         // 2. Command header + page count (04 <cmd> ... <count>)
         let mut header = [0u8; 64];
         header[0] = 0x04;
         header[1] = cmd;
         header[8] = pages.len() as u8;
-        self.send_cmd_with_ack(&header)?;
+        self.send_cmd_with_ack("HEADER", &header)?;
 
         // 3. Raw 64-byte data pages
         for page in pages {
             self.send_report(page)?;
-            sleep(Duration::from_millis(5));
+            sleep(Duration::from_millis(15));
         }
 
         // 4. Commit (04 02) & Apply (04 f0)
         let mut commit = [0u8; 64];
         commit[0] = 0x04;
         commit[1] = 0x02;
-        self.send_cmd_with_ack(&commit)?;
+        self.send_cmd_with_ack("COMMIT", &commit)?;
 
         let mut apply = [0u8; 64];
         apply[0] = 0x04;
         apply[1] = 0xf0;
-        self.send_cmd_with_ack(&apply)?;
+        self.send_cmd_with_ack("APPLY", &apply)?;
 
         Ok(())
     }
