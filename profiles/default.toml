@@ -1,0 +1,76 @@
+# Cloud Nine C989 ErgoFSK — Verified Safe Baseline Profile
+# Matches references/captures/filtered_apply_default_profile.txt
+
+name = "default"
+
+[rgb]
+mode = "static"
+color = "#0000ff"
+brightness = 5
+speed = 6
+full_spectrum = false
+
+[rgb.per_key]
+w = "#ffffff"
+a = "#ffffff"
+s = "#ffffff"
+d = "#ffffff"
+
+[[smart_wheel]]
+mode = "volume"
+color = "#ff6600"
+
+[[smart_wheel]]
+mode = "task_switcher"
+color = "#ff2020"
+
+[[smart_wheel]]
+mode = "vertical_scroll"
+color = "#4c20ff"
+
+[[smart_wheel]]
+mode = "brightness"
+color = "#20ff20"
+
+[keymap.base]
+m1 = "caps"
+m2 = "scroll_up"
+m3 = "scroll_down"
+m4 = "mouse_right"
+m8 = "mouse_left"
+m9 = "mouse_middle"
+left_space = "backspace"
+
+[keymap.fn]
+f1 = "media_player"
+f2 = "play_pause"
+f3 = "stop"
+f4 = "prev_track"
+f5 = "next_track"
+w = "mouse_middle"
+e = "up"
+r = "mouse_right"
+t = "scroll_up"
+i = "mouse_right"
+o = "up"
+p = "mouse_left"
+lbracket = "scroll_up"
+s = "left"
+d = "down"
+f = "right"
+g = "scroll_down"
+h = "raw:02000100"
+j = "raw:02000100"
+k = "left"
+l = "down"
+semicolon = "right"
+quote = "scroll_down"
+n = "raw:02000100"
+m = "left"
+comma = "down"
+period = "right"
+slash = "mouse_middle"
+left_space = "mouse_left"
+right_space = "mouse_left"
+prtsc = "scrlk"
+pause = "insert"

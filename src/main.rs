@@ -1,185 +1,497 @@
-use hidapi::{HidApi, HidDevice};
-use std::env;
-use std::thread::sleep;
+mod layout;
+mod profile;
+mod protocol;
+mod transport;
+
+use clap::{Parser, Subcommand, ValueEnum};
+use layout::{KEYS, find_key};
+use profile::Profile;
+use protocol::{
+    ALL_RGB_MODES, KeyEntry, RgbConfig, RgbMode, baseline_base_keymap, baseline_fn_keymap,
+    baseline_smart_wheel_slots, build_rgb_pages, build_smart_wheel_page, format_hex_color,
+    parse_color, parse_wheel_mode, set_keymap_slot, wheel_mode_name,
+};
+use std::collections::BTreeMap;
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
+use transport::C989;
 
-const VID: u16 = 0x0c45;
-const PID: u16 = 0x8006;
-const CONFIG_INTERFACE: i32 = 0;
-
-struct C989 {
-    dev: HidDevice,
+#[derive(Parser)]
+#[command(
+    name = "c989ctl",
+    version,
+    about = "Native Linux control utility for the Cloud Nine C989 ErgoFSK keyboard"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
 }
 
-impl C989 {
-    fn open() -> Result<Self, String> {
-        let api = HidApi::new().map_err(|e| format!("HidApi init failed: {e}"))?;
-        let info = api
-            .device_list()
-            .find(|d| {
-                d.vendor_id() == VID
-                    && d.product_id() == PID
-                    && d.interface_number() == CONFIG_INTERFACE
-            })
-            .ok_or_else(|| {
-                "Cloud Nine C989 (0c45:8006, interface 0) not found. Check connection/permissions."
-                    .to_string()
-            })?;
+#[derive(Clone, Copy, ValueEnum)]
+enum Layer {
+    Base,
+    Fn,
+}
 
-        let dev = info
-            .open_device(&api)
-            .map_err(|e| format!("Failed to open hidraw device (try sudo or udev rule): {e}"))?;
+#[derive(Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum BlockFilter {
+    Base,
+    Fn,
+    Rgb,
+    Wheel,
+}
 
-        Ok(Self { dev })
+#[derive(Subcommand)]
+enum Commands {
+    /// Set RGB lighting mode, color, brightness, speed, or per-key LEDs (`04 13`)
+    Rgb {
+        /// Lighting mode (e.g. static, breath, volcano, pinwheel, user-define, or 0x01..0x13/0x80).
+        /// Defaults to `user-define` if `--key` is given, otherwise `static`.
+        #[arg(short, long)]
+        mode: Option<String>,
+
+        /// Color (red, green, blue, white, off, orange, purple, or RRGGBB)
+        #[arg(short, long, default_value = "ff0000")]
+        color: String,
+
+        /// Brightness level (0..=6)
+        #[arg(short, long, default_value_t = 6)]
+        brightness: u8,
+
+        /// Animation speed (0..=10)
+        #[arg(short, long, default_value_t = 6)]
+        speed: u8,
+
+        /// Override full-spectrum / rainbow flag (byte 8)
+        #[arg(long)]
+        full_spectrum: Option<bool>,
+
+        /// Set individual key LEDs in user-define (0x80) mode: KEY=COLOR (repeatable)
+        #[arg(short = 'k', long = "key", value_name = "KEY=COLOR")]
+        keys: Vec<String>,
+    },
+
+    /// Remap a single key on the base (`04 11`) or Fn (`04 27`) layer (with 15s auto-revert safety net)
+    Remap {
+        /// Physical key name (e.g. insert, m1, left_space; see `list-keys`)
+        key: String,
+
+        /// Action (e.g. a, ctrl+c, mouse_left, scroll_up, play_pause, disabled, default, macro:1)
+        action: String,
+
+        /// Target keymap layer
+        #[arg(short, long, value_enum, default_value_t = Layer::Base)]
+        layer: Layer,
+
+        /// Optional base profile TOML to start from (defaults to built-in verified baseline)
+        #[arg(short, long)]
+        profile: Option<PathBuf>,
+
+        /// Skip the 15-second confirmation prompt and auto-revert safety net
+        #[arg(short = 'y', long = "yes", alias = "no-revert")]
+        yes: bool,
+
+        /// Auto-revert timeout in seconds
+        #[arg(long, default_value_t = 15)]
+        timeout: u64,
+    },
+
+    /// Configure the Smart Wheel (`04 25`, 4 mode/color slots, no `04 f0` apply)
+    Wheel {
+        /// Set a slot (1..=4) in format SLOT:MODE:COLOR (e.g. 1:volume:0000ff) (repeatable)
+        #[arg(short = 's', long = "set", value_name = "SLOT:MODE:COLOR")]
+        sets: Vec<String>,
+
+        /// Reset all 4 Smart Wheel slots to the captured baseline defaults
+        #[arg(long)]
+        reset: bool,
+    },
+
+    /// Apply a TOML profile (keymap, RGB, Smart Wheel) with 15s keymap auto-revert by default
+    Apply {
+        /// Path to the profile .toml file
+        profile: PathBuf,
+
+        /// Apply only a specific block from the profile
+        #[arg(long, value_enum)]
+        only: Option<BlockFilter>,
+
+        /// Optional profile to revert keymaps to if not confirmed (defaults to verified baseline)
+        #[arg(long)]
+        revert_to: Option<PathBuf>,
+
+        /// Skip the 15-second confirmation prompt and auto-revert safety net
+        #[arg(short = 'y', long = "yes", alias = "no-revert")]
+        yes: bool,
+
+        /// Auto-revert timeout in seconds
+        #[arg(long, default_value_t = 15)]
+        timeout: u64,
+    },
+
+    /// Flash your exact verified safe baseline (base keymap, Fn keymap, Smart Wheel)
+    RestoreBaseline {
+        /// Also restore baseline static blue RGB lighting
+        #[arg(long)]
+        include_rgb: bool,
+    },
+
+    /// Print all 115 physical keys, indices, and default HID codes
+    ListKeys,
+
+    /// Print all supported RGB modes and Smart Wheel modes
+    ListModes,
+
+    /// Print the verified baseline profile in TOML format
+    DumpBaseline,
+}
+
+fn confirm_or_revert<F>(timeout_secs: u64, description: &str, revert: F) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    println!("Applied {description}.");
+    print!(
+        "Keep this change? Type 'y' + Enter within {timeout_secs}s (anything else or timeout auto-reverts): "
+    );
+    io::stdout().flush().ok();
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_ok() {
+            let _ = tx.send(input.trim().to_lowercase());
+        }
+    });
+
+    match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
+        Ok(ans) if ans == "y" || ans == "yes" => {
+            println!("Change kept.");
+            Ok(())
+        }
+        Ok(_) => {
+            println!("Reverting...");
+            revert()?;
+            println!("Reverted cleanly!");
+            Ok(())
+        }
+        Err(_) => {
+            println!("\nTimed out after {timeout_secs}s — reverting to safe keymap...");
+            revert()?;
+            println!("Reverted cleanly!");
+            Ok(())
+        }
     }
+}
 
-    /// Sends a 64-byte HID Feature Report (prefixed with Report ID 0x00).
-    fn send_report(&self, payload: &[u8; 64]) -> Result<(), String> {
-        let mut buf = [0u8; 65];
-        buf[0] = 0x00; // Report ID 0
-        buf[1..].copy_from_slice(payload);
-        self.dev
-            .send_feature_report(&buf)
-            .map_err(|e| format!("send_feature_report failed: {e}"))?;
-        Ok(())
-    }
+fn run() -> Result<(), String> {
+    let cli = Cli::parse();
 
-    /// Reads a 64-byte HID Feature Report acknowledgment.
-    fn get_report(&self) -> Result<[u8; 64], String> {
-        let mut buf = [0u8; 65];
-        buf[0] = 0x00; // Report ID 0
-        self.dev
-            .get_feature_report(&mut buf)
-            .map_err(|e| format!("get_feature_report failed: {e}"))?;
-        let mut out = [0u8; 64];
-        out.copy_from_slice(&buf[1..]);
-        Ok(out)
-    }
-
-    /// Sends a command packet and polls GET_REPORT until the keyboard isn't busy (0xFF).
-    fn send_cmd_with_ack(&self, label: &str, payload: &[u8; 64]) -> Result<[u8; 64], String> {
-        self.send_report(payload)?;
-        for attempt in 0..10 {
-            sleep(Duration::from_millis(35));
-            let ack = self.get_report()?;
-            println!("{label} ack (try {attempt}): {:02x?}", &ack[..10]);
-            if ack[0] != 0xff {
-                return Ok(ack);
+    match cli.command {
+        Commands::ListKeys => {
+            println!("{:<14} {:>5} {:>5} {:>6}  STATUS    ALIASES", "NAME", "KEY", "LED", "HID");
+            for k in KEYS {
+                let status = if k.remappable { "" } else { "[locked]" };
+                println!(
+                    "{:<14} {:>5} {:>5}   0x{:02x}  {:<8}  {}",
+                    k.name,
+                    k.key_index,
+                    k.light_index,
+                    k.default_code,
+                    status,
+                    k.aliases.join(", ")
+                );
             }
+            return Ok(());
         }
-        Err(format!("{label}: keyboard stayed busy (0xFF)"))
-    }
-
-    /// Executes the 4-stage Sonix transaction: 04 18 -> 04 <cmd> -> data -> 04 02 -> 04 f0
-    fn write_block(&self, cmd: u8, pages: &[[u8; 64]]) -> Result<(), String> {
-        // 1. Begin transaction (04 18)
-        let mut begin = [0u8; 64];
-        begin[0] = 0x04;
-        begin[1] = 0x18;
-        self.send_cmd_with_ack("BEGIN", &begin)?;
-
-        // 2. Command header + page count (04 <cmd> ... <count>)
-        let mut header = [0u8; 64];
-        header[0] = 0x04;
-        header[1] = cmd;
-        header[8] = pages.len() as u8;
-        self.send_cmd_with_ack("HEADER", &header)?;
-
-        // 3. Raw 64-byte data pages
-        for page in pages {
-            self.send_report(page)?;
-            sleep(Duration::from_millis(15));
-        }
-
-        // 4. Commit (04 02) & Apply (04 f0)
-        let mut commit = [0u8; 64];
-        commit[0] = 0x04;
-        commit[1] = 0x02;
-        self.send_cmd_with_ack("COMMIT", &commit)?;
-
-        let mut apply = [0u8; 64];
-        apply[0] = 0x04;
-        apply[1] = 0xf0;
-        self.send_cmd_with_ack("APPLY", &apply)?;
-
-        Ok(())
-    }
-
-    /// Sets the keyboard to Static RGB mode (0x01) with the given (R, G, B) color.
-    fn set_static_rgb(&self, r: u8, g: u8, b: u8) -> Result<(), String> {
-        let mut pages = [[0u8; 64]; 18];
-
-        // Helper to build a 16-byte lighting mode slot
-        let make_slot =
-            |mode: u8, r: u8, g: u8, b: u8, flag: u8, bright: u8, speed: u8| -> [u8; 16] {
-                [
-                    mode, r, g, b, 0x00, 0x00, 0x00, 0x00, flag, bright, speed, 0x00, 0x00, 0x00,
-                    0xaa, 0x55,
-                ]
-            };
-
-        // Page 0: modes 01..04 (mode 01 = Static)
-        let active_slot = make_slot(0x01, r, g, b, 0x00, 0x06, 0x06);
-        pages[0][0..16].copy_from_slice(&active_slot);
-        pages[0][16..32].copy_from_slice(&make_slot(0x02, 0x00, 0xff, 0xff, 0x00, 0x06, 0x06));
-        pages[0][32..48].copy_from_slice(&make_slot(0x03, 0xff, 0x00, 0x00, 0x00, 0x06, 0x06));
-        pages[0][48..64].copy_from_slice(&make_slot(0x04, 0xff, 0xff, 0x00, 0x00, 0x06, 0x06));
-
-        // Pages 1..4: default slots for modes 05..13 and 80 (per-key)
-        pages[1][0..16].copy_from_slice(&make_slot(0x05, 0x00, 0x00, 0xff, 0x00, 0x06, 0x06));
-        pages[1][16..32].copy_from_slice(&make_slot(0x06, 0xa0, 0x20, 0xf0, 0x00, 0x06, 0x06));
-        pages[1][32..48].copy_from_slice(&make_slot(0x07, 0xa0, 0x20, 0xf0, 0x01, 0x06, 0x06));
-        pages[1][48..64].copy_from_slice(&make_slot(0x08, 0xa0, 0x20, 0xf0, 0x01, 0x06, 0x06));
-
-        for (i, mode) in (0x09u8..=0x13u8).enumerate() {
-            let page_idx = 2 + (i / 4);
-            let offset = (i % 4) * 16;
-            pages[page_idx][offset..offset + 16]
-                .copy_from_slice(&make_slot(mode, 0xa0, 0x20, 0xf0, 0x01, 0x06, 0x06));
-        }
-        pages[4][48..64].copy_from_slice(&make_slot(0x80, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00));
-
-        // Pages 5..7: zeros (already initialized)
-
-        // Pages 8..16: per-key LED table (16 entries of 0x80 00 00 00 per page)
-        for p in 8..=16 {
-            for k in 0..16 {
-                pages[p][k * 4] = 0x80;
+        Commands::ListModes => {
+            println!("RGB Modes (04 13):");
+            for m in ALL_RGB_MODES {
+                println!(
+                    "  0x{:02x}  {:<12}  (default full_spectrum: {})",
+                    m.id(),
+                    m.name(),
+                    m.default_full_spectrum()
+                );
             }
+            println!("\nSmart Wheel Modes (04 25):");
+            for id in 0u8..=3 {
+                println!("  0x{id:02x}  {}", wheel_mode_name(id));
+            }
+            return Ok(());
         }
-
-        // Page 17: currently active lighting mode
-        pages[17][0..16].copy_from_slice(&active_slot);
-
-        self.write_block(0x13, &pages)
+        Commands::DumpBaseline => {
+            let toml_str = Profile::baseline().to_toml_string()?;
+            print!("{toml_str}");
+            return Ok(());
+        }
+        _ => {}
     }
-}
-
-fn parse_hex_color(hex: &str) -> Result<(u8, u8, u8), String> {
-    let clean = hex.trim_start_matches('#');
-    if clean.len() != 6 {
-        return Err("Expected 6-digit hex color (e.g., ff0000 or 00ff88)".into());
-    }
-    let r = u8::from_str_radix(&clean[0..2], 16).map_err(|_| "Invalid red hex")?;
-    let g = u8::from_str_radix(&clean[2..4], 16).map_err(|_| "Invalid green hex")?;
-    let b = u8::from_str_radix(&clean[4..6], 16).map_err(|_| "Invalid blue hex")?;
-    Ok((r, g, b))
-}
-
-fn main() -> Result<(), String> {
-    let arg = env::args().nth(1).unwrap_or_else(|| "ff0000".to_string());
-
-    let (r, g, b) = match arg.to_lowercase().as_str() {
-        "red" => (0xff, 0x00, 0x00),
-        "green" => (0x00, 0xff, 0x00),
-        "blue" => (0x00, 0x00, 0xff),
-        "white" => (0xff, 0xff, 0xff),
-        "off" => (0x00, 0x00, 0x00),
-        other => parse_hex_color(other)?,
-    };
 
     let kb = C989::open()?;
-    kb.set_static_rgb(r, g, b)?;
-    println!("Successfully set C989 static RGB to #{r:02x}{g:02x}{b:02x}");
+
+    match cli.command {
+        Commands::Rgb {
+            mode,
+            color,
+            brightness,
+            speed,
+            full_spectrum,
+            keys,
+        } => {
+            let rgb_mode = match mode {
+                Some(m) => RgbMode::parse(&m)?,
+                None if !keys.is_empty() => RgbMode::UserDefine,
+                None => RgbMode::Static,
+            };
+            let rgb_color = parse_color(&color)?;
+            let full_spec = full_spectrum.unwrap_or_else(|| rgb_mode.default_full_spectrum());
+
+            let mut per_key = BTreeMap::new();
+            for spec in &keys {
+                let (k_str, c_str) = spec
+                    .split_once('=')
+                    .ok_or_else(|| format!("expected KEY=COLOR, got '{spec}'"))?;
+                let info = find_key(k_str)
+                    .ok_or_else(|| format!("unknown physical key '{k_str}'"))?;
+                let c = parse_color(c_str)?;
+                per_key.insert(info.light_index, c);
+            }
+
+            let cfg = RgbConfig {
+                mode: rgb_mode,
+                color: rgb_color,
+                full_spectrum: full_spec,
+                brightness,
+                speed,
+                per_key: per_key.clone(),
+            };
+            let pages = build_rgb_pages(&cfg);
+            kb.write_rgb(&pages)?;
+
+            if rgb_mode == RgbMode::UserDefine {
+                println!(
+                    "Set RGB mode={} brightness={} with {} lit key(s).",
+                    rgb_mode,
+                    brightness,
+                    per_key.len()
+                );
+            } else {
+                println!(
+                    "Set RGB mode={} color={} brightness={} speed={} full_spectrum={}",
+                    rgb_mode,
+                    format_hex_color(rgb_color),
+                    brightness,
+                    speed,
+                    full_spec
+                );
+            }
+        }
+
+        Commands::Remap {
+            key,
+            action,
+            layer,
+            profile,
+            yes,
+            timeout,
+        } => {
+            let info = find_key(&key)
+                .ok_or_else(|| format!("unknown physical key '{key}' (run `c989ctl list-keys`)"))?;
+            if !info.remappable {
+                return Err(format!(
+                    "key '{}' (slot {}) is hardware-locked and cannot be remapped",
+                    info.name, info.key_index
+                ));
+            }
+            let entry = KeyEntry::parse(&action)?;
+
+            let revert_pages = match profile {
+                Some(path) => {
+                    let compiled = Profile::load(&path)?.compile()?;
+                    match layer {
+                        Layer::Base => compiled.base_keymap.unwrap_or_else(baseline_base_keymap),
+                        Layer::Fn => compiled.fn_keymap.unwrap_or_else(baseline_fn_keymap),
+                    }
+                }
+                None => match layer {
+                    Layer::Base => baseline_base_keymap(),
+                    Layer::Fn => baseline_fn_keymap(),
+                },
+            };
+
+            let mut new_pages = revert_pages;
+            set_keymap_slot(&mut new_pages, info.key_index, entry);
+
+            let layer_name = match layer {
+                Layer::Base => "base (04 11)",
+                Layer::Fn => "Fn (04 27)",
+            };
+            println!(
+                "Flashing {layer_name} remap: {} (slot {}) -> {} ({:02x?})...",
+                info.name,
+                info.key_index,
+                action,
+                entry.to_bytes()
+            );
+
+            match layer {
+                Layer::Base => kb.write_base_keymap(&new_pages)?,
+                Layer::Fn => kb.write_fn_keymap(&new_pages)?,
+            }
+
+            if yes {
+                println!("Remap applied (--yes).");
+            } else {
+                let desc = format!("{layer_name} remap ({} -> {action})", info.name);
+                confirm_or_revert(timeout, &desc, || match layer {
+                    Layer::Base => kb.write_base_keymap(&revert_pages),
+                    Layer::Fn => kb.write_fn_keymap(&revert_pages),
+                })?;
+            }
+        }
+
+        Commands::Wheel { sets, reset } => {
+            if !reset && sets.is_empty() {
+                return Err(
+                    "specify at least one `--set SLOT:MODE:COLOR` (e.g. `--set 1:volume:0000ff`) or `--reset`"
+                        .into(),
+                );
+            }
+            let mut slots = baseline_smart_wheel_slots();
+            if !reset {
+                for spec in &sets {
+                    let parts: Vec<&str> = spec.split(':').collect();
+                    if parts.len() != 3 {
+                        return Err(format!(
+                            "expected SLOT:MODE:COLOR (e.g. 1:volume:0000ff), got '{spec}'"
+                        ));
+                    }
+                    let slot_num: usize = parts[0]
+                        .parse()
+                        .map_err(|_| format!("invalid slot number '{}' (expected 1..=4)", parts[0]))?;
+                    if !(1..=4).contains(&slot_num) {
+                        return Err(format!("slot number must be 1..=4, got {slot_num}"));
+                    }
+                    let mode = parse_wheel_mode(parts[1])?;
+                    let color = parse_color(parts[2])?;
+                    slots[slot_num - 1] = protocol::SmartWheelSlot { mode, color };
+                }
+            }
+
+            let page = build_smart_wheel_page(&slots);
+            kb.write_smart_wheel(&page)?;
+            println!("Updated Smart Wheel (04 25, no 04 f0):");
+            for (i, s) in slots.iter().enumerate() {
+                println!(
+                    "  Slot {}: {} (0x{:02x})  {}",
+                    i + 1,
+                    wheel_mode_name(s.mode),
+                    s.mode,
+                    format_hex_color(s.color)
+                );
+            }
+        }
+
+        Commands::Apply {
+            profile,
+            only,
+            revert_to,
+            yes,
+            timeout,
+        } => {
+            let prof = Profile::load(&profile)?;
+            let compiled = prof.compile()?;
+
+            let do_base = (only.is_none() || only == Some(BlockFilter::Base))
+                && compiled.base_keymap.is_some();
+            let do_fn =
+                (only.is_none() || only == Some(BlockFilter::Fn)) && compiled.fn_keymap.is_some();
+            let do_rgb =
+                (only.is_none() || only == Some(BlockFilter::Rgb)) && compiled.rgb.is_some();
+            let do_wheel = (only.is_none() || only == Some(BlockFilter::Wheel))
+                && compiled.smart_wheel.is_some();
+
+            if !do_base && !do_fn && !do_rgb && !do_wheel {
+                return Err(format!(
+                    "profile '{}' has no matching sections to apply",
+                    prof.name
+                ));
+            }
+
+            let (revert_base, revert_fn) = match revert_to {
+                Some(ref rpath) => {
+                    let rc = Profile::load(rpath)?.compile()?;
+                    (
+                        rc.base_keymap.unwrap_or_else(baseline_base_keymap),
+                        rc.fn_keymap.unwrap_or_else(baseline_fn_keymap),
+                    )
+                }
+                None => (baseline_base_keymap(), baseline_fn_keymap()),
+            };
+
+            println!("Applying profile '{}'...", prof.name);
+            if do_base {
+                println!("  -> Writing base keymap (04 11)...");
+                kb.write_base_keymap(compiled.base_keymap.as_ref().unwrap())?;
+            }
+            if do_fn {
+                println!("  -> Writing Fn keymap (04 27)...");
+                kb.write_fn_keymap(compiled.fn_keymap.as_ref().unwrap())?;
+            }
+            if do_wheel {
+                println!("  -> Writing Smart Wheel (04 25)...");
+                kb.write_smart_wheel(compiled.smart_wheel.as_ref().unwrap())?;
+            }
+            if do_rgb {
+                println!("  -> Writing RGB lighting (04 13)...");
+                kb.write_rgb(compiled.rgb.as_ref().unwrap())?;
+            }
+
+            if (do_base || do_fn) && !yes {
+                let desc = format!("profile '{}'", prof.name);
+                confirm_or_revert(timeout, &desc, || {
+                    if do_base {
+                        kb.write_base_keymap(&revert_base)?;
+                    }
+                    if do_fn {
+                        kb.write_fn_keymap(&revert_fn)?;
+                    }
+                    Ok(())
+                })?;
+            } else {
+                println!("Profile '{}' applied.", prof.name);
+            }
+        }
+
+        Commands::RestoreBaseline { include_rgb } => {
+            println!("Restoring verified safe baseline...");
+            kb.write_base_keymap(&baseline_base_keymap())?;
+            println!("  -> Base keymap (04 11) restored.");
+            kb.write_fn_keymap(&baseline_fn_keymap())?;
+            println!("  -> Fn keymap (04 27) restored.");
+            kb.write_smart_wheel(&build_smart_wheel_page(&baseline_smart_wheel_slots()))?;
+            println!("  -> Smart Wheel (04 25) restored.");
+            if include_rgb {
+                let compiled = Profile::baseline().compile()?;
+                kb.write_rgb(compiled.rgb.as_ref().unwrap())?;
+                println!("  -> RGB lighting (04 13) restored.");
+            }
+            println!("Baseline restore complete.");
+        }
+
+        Commands::ListKeys | Commands::ListModes | Commands::DumpBaseline => unreachable!(),
+    }
+
     Ok(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("Error: {err}");
+        std::process::exit(1);
+    }
 }
