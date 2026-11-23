@@ -18,6 +18,51 @@ pub struct Profile {
     pub smart_wheel: Option<Vec<WheelSlotProfile>>,
     #[serde(default)]
     pub keymap: Option<KeymapProfile>,
+    /// Host-side actions triggered by `macro:<slot>` keys via Interface 1 Report ID 0x05.
+    #[serde(default)]
+    pub actions: BTreeMap<String, ActionSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActionSpec {
+    /// Launch an executable detached (e.g. `krita`, `vlc`).
+    Launch {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+    },
+    /// Run a shell command via `sh -c` detached.
+    Shell { command: String },
+    /// Type a literal text string (respects active X11 layout such as Dvorak via `xdotool`).
+    Text {
+        text: String,
+        #[serde(default = "default_type_delay_ms")]
+        delay_ms: u32,
+    },
+    /// Play a sequence of key combos, text snippets, delays, or commands.
+    Macro {
+        steps: Vec<MacroStep>,
+        #[serde(default = "default_type_delay_ms")]
+        delay_ms: u32,
+    },
+}
+
+fn default_type_delay_ms() -> u32 {
+    12
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MacroStep {
+    Key { key: String },
+    Text { text: String },
+    Delay { delay_ms: u64 },
+    Exec {
+        exec: String,
+        #[serde(default)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,7 +198,26 @@ impl Profile {
                 base: Some(base),
                 fn_layer: Some(fn_layer),
             }),
+            actions: BTreeMap::new(),
         }
+    }
+
+    /// Parse `[actions.<slot>]` keys into numeric slot IDs (`1..=255`).
+    pub fn parsed_actions(&self) -> Result<BTreeMap<u8, ActionSpec>, String> {
+        let mut out = BTreeMap::new();
+        for (slot_key, spec) in &self.actions {
+            let slot: u8 = if let Some(hex) = slot_key.strip_prefix("0x") {
+                u8::from_str_radix(hex, 16)
+            } else {
+                slot_key.parse::<u8>()
+            }
+            .map_err(|_| format!("actions.{slot_key}: expected slot number 1..=255"))?;
+            if slot == 0 {
+                return Err("actions.0: slot 0 is reserved; use slots 1..=255".into());
+            }
+            out.insert(slot, spec.clone());
+        }
+        Ok(out)
     }
 
     pub fn compile(&self) -> Result<CompiledProfile, String> {
@@ -295,5 +359,15 @@ mod tests {
         assert!(test_c.base_keymap.is_some());
         assert!(test_c.rgb.is_some());
         assert!(test_c.smart_wheel.is_some());
+
+        let macro_prof = Profile::load(Path::new("profiles/macro_test.toml")).unwrap();
+        let macro_c = macro_prof.compile().unwrap();
+        assert!(macro_c.base_keymap.is_some());
+        let actions = macro_prof.parsed_actions().unwrap();
+        assert_eq!(actions.len(), 4);
+        assert!(actions.contains_key(&1));
+        assert!(actions.contains_key(&2));
+        assert!(actions.contains_key(&3));
+        assert!(actions.contains_key(&4));
     }
 }

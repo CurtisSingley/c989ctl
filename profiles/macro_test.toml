@@ -1,0 +1,44 @@
+# Cloud Nine C989 ErgoFSK — Macro & App Launcher Verification Profile
+# Keeps your full baseline keymaps intact, and maps 4 safe test keys to host actions:
+#   - M6      -> macro:1 -> launch Krita
+#   - M7      -> macro:2 -> launch VLC Media Player
+#   - Insert  -> macro:3 -> type literal text "abcd"
+#   - Home    -> macro:4 -> multi-step key macro ("hi" + Enter + "c989")
+
+name = "macro_test"
+
+[keymap.base]
+m1 = "caps"
+m2 = "scroll_up"
+m3 = "scroll_down"
+m4 = "mouse_right"
+m6 = "macro:1"
+m7 = "macro:2"
+m8 = "mouse_left"
+m9 = "mouse_middle"
+left_space = "backspace"
+insert = "macro:3"
+home = "macro:4"
+
+[actions.1]
+kind = "launch"
+command = "krita"
+
+[actions.2]
+kind = "launch"
+command = "vlc"
+
+[actions.3]
+kind = "text"
+text = "abcd"
+delay_ms = 12
+
+[actions.4]
+kind = "macro"
+delay_ms = 12
+steps = [
+  { text = "hi" },
+  { delay_ms = 50 },
+  { key = "Return" },
+  { text = "c989" },
+]

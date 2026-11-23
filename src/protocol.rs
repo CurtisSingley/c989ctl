@@ -525,6 +525,8 @@ pub fn parse_wheel_mode(s: &str) -> Result<u8, String> {
         "task_switcher" | "taskswitcher" | "alt_tab" | "alttab" => Ok(0x01),
         "vertical_scroll" | "vscroll" | "scroll" => Ok(0x02),
         "brightness" | "led" | "backlight" => Ok(0x03),
+        "horizontal_scroll" | "hscroll" | "horiz_scroll" => Ok(0x04),
+        "zoom" => Ok(0x05),
         other => parse_u8_auto(other).map_err(|_| format!("unknown Smart Wheel mode '{s}'")),
     }
 }
@@ -535,6 +537,8 @@ pub fn wheel_mode_name(mode: u8) -> &'static str {
         0x01 => "task_switcher",
         0x02 => "vertical_scroll",
         0x03 => "brightness",
+        0x04 => "horizontal_scroll",
+        0x05 => "zoom",
         _ => "custom",
     }
 }

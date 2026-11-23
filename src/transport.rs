@@ -1,10 +1,12 @@
 use hidapi::{HidApi, HidDevice};
+use std::collections::HashSet;
 use std::thread::sleep;
 use std::time::Duration;
 
 pub const VID: u16 = 0x0c45;
 pub const PID: u16 = 0x8006;
 pub const CONFIG_INTERFACE: i32 = 0;
+pub const VENDOR_INTERFACE: i32 = 1;
 
 pub const CMD_BEGIN: u8 = 0x18;
 pub const CMD_COMMIT: u8 = 0x02;
@@ -17,8 +19,7 @@ pub const CMD_SMART_WHEEL: u8 = 0x25;
 
 pub struct InterfaceHandle {
     pub interface_number: i32,
-    pub usage_page: u16,
-    pub usage: u16,
+    pub path: String,
     pub dev: HidDevice,
 }
 
@@ -49,18 +50,21 @@ pub fn list_interfaces() -> Result<Vec<InterfaceSummary>, String> {
 pub fn open_all_interfaces() -> Result<Vec<InterfaceHandle>, String> {
     let api = HidApi::new().map_err(|e| format!("HidApi init failed: {e}"))?;
     let mut handles = Vec::new();
+    let mut seen_paths = HashSet::new();
     for d in api
         .device_list()
         .filter(|d| d.vendor_id() == VID && d.product_id() == PID)
     {
         let path = d.path().to_string_lossy().into_owned();
+        if !seen_paths.insert(path.clone()) {
+            continue;
+        }
         match d.open_device(&api) {
             Ok(dev) => {
                 let _ = dev.set_blocking_mode(false);
                 handles.push(InterfaceHandle {
                     interface_number: d.interface_number(),
-                    usage_page: d.usage_page(),
-                    usage: d.usage(),
+                    path,
                     dev,
                 });
             }
@@ -73,6 +77,40 @@ pub fn open_all_interfaces() -> Result<Vec<InterfaceHandle>, String> {
         }
     }
     Ok(handles)
+}
+
+/// Open the C989 vendor/media HID interface (Interface 1) for listening to Report ID 0x05 triggers.
+pub fn open_vendor_interface() -> Result<InterfaceHandle, String> {
+    let api = HidApi::new().map_err(|e| format!("HidApi init failed: {e}"))?;
+    let info = api
+        .device_list()
+        .find(|d| {
+            d.vendor_id() == VID
+                && d.product_id() == PID
+                && d.interface_number() == VENDOR_INTERFACE
+                && d.usage_page() == 0xffff
+        })
+        .or_else(|| {
+            api.device_list().find(|d| {
+                d.vendor_id() == VID
+                    && d.product_id() == PID
+                    && d.interface_number() == VENDOR_INTERFACE
+            })
+        })
+        .ok_or_else(|| {
+            "Cloud Nine C989 (0c45:8006, interface 1) not found. Check connection/permissions."
+                .to_string()
+        })?;
+
+    let path = info.path().to_string_lossy().into_owned();
+    let dev = info
+        .open_device(&api)
+        .map_err(|e| format!("Failed to open interface 1 ({path}): {e}"))?;
+    Ok(InterfaceHandle {
+        interface_number: info.interface_number(),
+        path,
+        dev,
+    })
 }
 
 pub struct C989 {

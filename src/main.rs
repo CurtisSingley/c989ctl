@@ -1,3 +1,4 @@
+mod daemon;
 mod layout;
 mod profile;
 mod protocol;
@@ -148,15 +149,25 @@ enum Commands {
     /// Print the verified baseline profile in TOML format
     DumpBaseline,
 
+    /// Run background daemon listening for `macro:<slot>` HID triggers (app launcher & macros)
+    Daemon {
+        /// Path to the profile .toml file containing `[actions.<slot>]` definitions
+        profile: PathBuf,
+    },
+
     /// List C989 HID interfaces and monitor raw HID input reports (useful for probing macros/triggers)
     Listen {
         /// How many seconds to listen for HID input reports
         #[arg(short, long, default_value_t = 15)]
         duration: u64,
 
-        /// Temporarily remap a key to a macro slot (KEY:SLOT, e.g. m6:1), listen, then auto-revert
+        /// Temporarily remap key(s) to macro slot(s) (KEY:SLOT, e.g. m6:1), listen, then auto-revert (repeatable)
         #[arg(long, value_name = "KEY:SLOT")]
-        test_macro: Option<String>,
+        test_macro: Vec<String>,
+
+        /// Also dump raw USB HID report descriptors from sysfs for each unique hidraw device
+        #[arg(long)]
+        dump_descriptors: bool,
     },
 }
 
@@ -229,7 +240,7 @@ fn run() -> Result<(), String> {
                 );
             }
             println!("\nSmart Wheel Modes (04 25):");
-            for id in 0u8..=3 {
+            for id in 0u8..=5 {
                 println!("  0x{id:02x}  {}", wheel_mode_name(id));
             }
             return Ok(());
@@ -239,15 +250,21 @@ fn run() -> Result<(), String> {
             print!("{toml_str}");
             return Ok(());
         }
+        Commands::Daemon { profile } => {
+            let prof = Profile::load(&profile)?;
+            let actions = prof.parsed_actions()?;
+            return daemon::run_daemon(&prof.name, actions);
+        }
         Commands::Listen {
             duration,
             test_macro,
+            dump_descriptors,
         } => {
             let ifaces = list_interfaces()?;
             if ifaces.is_empty() {
                 return Err("No C989 (0c45:8006) HID interfaces found.".into());
             }
-            println!("Detected C989 HID interfaces:");
+            println!("Detected C989 HID collections:");
             for i in &ifaces {
                 println!(
                     "  iface={}  usage_page=0x{:04x}  usage=0x{:04x}  path={}",
@@ -255,27 +272,30 @@ fn run() -> Result<(), String> {
                 );
             }
 
-            let revert_base = if let Some(spec) = test_macro {
-                let (k_str, slot_str) = spec
-                    .split_once(':')
-                    .ok_or_else(|| format!("expected KEY:SLOT (e.g. m6:1), got '{spec}'"))?;
-                let info = find_key(k_str)
-                    .ok_or_else(|| format!("unknown physical key '{k_str}'"))?;
-                if !info.remappable {
-                    return Err(format!("key '{}' is hardware-locked", info.name));
-                }
-                let entry = KeyEntry::parse(&format!("macro:{slot_str}"))?;
+            let revert_base = if !test_macro.is_empty() {
                 let baseline = baseline_base_keymap();
                 let mut test_map = baseline;
-                set_keymap_slot(&mut test_map, info.key_index, entry);
+                println!("\nTemporarily applying test macro mapping(s) for {duration}s:");
+                for spec in &test_macro {
+                    let (k_str, slot_str) = spec
+                        .split_once(':')
+                        .ok_or_else(|| format!("expected KEY:SLOT (e.g. m6:1), got '{spec}'"))?;
+                    let info = find_key(k_str)
+                        .ok_or_else(|| format!("unknown physical key '{k_str}'"))?;
+                    if !info.remappable {
+                        return Err(format!("key '{}' is hardware-locked", info.name));
+                    }
+                    let entry = KeyEntry::parse(&format!("macro:{slot_str}"))?;
+                    set_keymap_slot(&mut test_map, info.key_index, entry);
+                    println!(
+                        "  {} (slot {}) -> macro:{slot_str} ({:02x?})",
+                        info.name,
+                        info.key_index,
+                        entry.to_bytes()
+                    );
+                }
 
                 let kb = C989::open()?;
-                println!(
-                    "\nTemporarily mapping {} (slot {}) -> macro:{slot_str} ({:02x?}) for {duration}s...",
-                    info.name,
-                    info.key_index,
-                    entry.to_bytes()
-                );
                 kb.write_base_keymap(&test_map)?;
                 Some((kb, baseline))
             } else {
@@ -283,8 +303,35 @@ fn run() -> Result<(), String> {
             };
 
             let handles = open_all_interfaces()?;
+            if dump_descriptors {
+                println!("\nHID Report Descriptors:");
+                for h in &handles {
+                    if let Some(dev_name) = h.path.rsplit('/').next() {
+                        let sys_path = format!("/sys/class/hidraw/{dev_name}/device/report_descriptor");
+                        match std::fs::read(&sys_path) {
+                            Ok(bytes) => {
+                                let hex: String = bytes
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                println!(
+                                    "  iface={} ({}) [{} bytes]:\n    {hex}",
+                                    h.interface_number,
+                                    h.path,
+                                    bytes.len()
+                                );
+                            }
+                            Err(e) => {
+                                println!("  iface={} ({}): could not read {sys_path}: {e}", h.interface_number, h.path);
+                            }
+                        }
+                    }
+                }
+            }
+
             println!(
-                "\nListening on {} open interface(s) for {duration}s... Press your test key now!",
+                "\nListening on {} unique hidraw device(s) for {duration}s... Press your test key(s) now!",
                 handles.len()
             );
             let start = Instant::now();
@@ -303,11 +350,10 @@ fn run() -> Result<(), String> {
                                 .collect::<Vec<_>>()
                                 .join(" ");
                             println!(
-                                "[{:6.2}s] iface={} (up=0x{:04x} u=0x{:04x}) len={:2}: {hex}",
+                                "[{:6.2}s] iface={} ({}) len={:2}: {hex}",
                                 start.elapsed().as_secs_f32(),
                                 h.interface_number,
-                                h.usage_page,
-                                h.usage,
+                                h.path,
                                 n
                             );
                         }
@@ -581,7 +627,11 @@ fn run() -> Result<(), String> {
             println!("Baseline restore complete.");
         }
 
-        Commands::ListKeys | Commands::ListModes | Commands::DumpBaseline | Commands::Listen { .. } => {
+        Commands::ListKeys
+        | Commands::ListModes
+        | Commands::DumpBaseline
+        | Commands::Daemon { .. }
+        | Commands::Listen { .. } => {
             unreachable!()
         }
     }
