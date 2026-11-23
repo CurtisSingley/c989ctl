@@ -16,8 +16,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
-use transport::C989;
+use std::time::{Duration, Instant};
+use transport::{C989, list_interfaces, open_all_interfaces};
 
 #[derive(Parser)]
 #[command(
@@ -57,11 +57,11 @@ enum Commands {
         #[arg(short, long, default_value = "ff0000")]
         color: String,
 
-        /// Brightness level (0..=6)
+        /// Brightness level (0..=6; 0-1 off, 2-5 steps, 5-6 max)
         #[arg(short, long, default_value_t = 6)]
         brightness: u8,
 
-        /// Animation speed (0..=10)
+        /// Animation speed (1..=10; 1 = static/paused, 10 = fastest)
         #[arg(short, long, default_value_t = 6)]
         speed: u8,
 
@@ -147,6 +147,17 @@ enum Commands {
 
     /// Print the verified baseline profile in TOML format
     DumpBaseline,
+
+    /// List C989 HID interfaces and monitor raw HID input reports (useful for probing macros/triggers)
+    Listen {
+        /// How many seconds to listen for HID input reports
+        #[arg(short, long, default_value_t = 15)]
+        duration: u64,
+
+        /// Temporarily remap a key to a macro slot (KEY:SLOT, e.g. m6:1), listen, then auto-revert
+        #[arg(long, value_name = "KEY:SLOT")]
+        test_macro: Option<String>,
+    },
 }
 
 fn confirm_or_revert<F>(timeout_secs: u64, description: &str, revert: F) -> Result<(), String>
@@ -226,6 +237,93 @@ fn run() -> Result<(), String> {
         Commands::DumpBaseline => {
             let toml_str = Profile::baseline().to_toml_string()?;
             print!("{toml_str}");
+            return Ok(());
+        }
+        Commands::Listen {
+            duration,
+            test_macro,
+        } => {
+            let ifaces = list_interfaces()?;
+            if ifaces.is_empty() {
+                return Err("No C989 (0c45:8006) HID interfaces found.".into());
+            }
+            println!("Detected C989 HID interfaces:");
+            for i in &ifaces {
+                println!(
+                    "  iface={}  usage_page=0x{:04x}  usage=0x{:04x}  path={}",
+                    i.interface_number, i.usage_page, i.usage, i.path
+                );
+            }
+
+            let revert_base = if let Some(spec) = test_macro {
+                let (k_str, slot_str) = spec
+                    .split_once(':')
+                    .ok_or_else(|| format!("expected KEY:SLOT (e.g. m6:1), got '{spec}'"))?;
+                let info = find_key(k_str)
+                    .ok_or_else(|| format!("unknown physical key '{k_str}'"))?;
+                if !info.remappable {
+                    return Err(format!("key '{}' is hardware-locked", info.name));
+                }
+                let entry = KeyEntry::parse(&format!("macro:{slot_str}"))?;
+                let baseline = baseline_base_keymap();
+                let mut test_map = baseline;
+                set_keymap_slot(&mut test_map, info.key_index, entry);
+
+                let kb = C989::open()?;
+                println!(
+                    "\nTemporarily mapping {} (slot {}) -> macro:{slot_str} ({:02x?}) for {duration}s...",
+                    info.name,
+                    info.key_index,
+                    entry.to_bytes()
+                );
+                kb.write_base_keymap(&test_map)?;
+                Some((kb, baseline))
+            } else {
+                None
+            };
+
+            let handles = open_all_interfaces()?;
+            println!(
+                "\nListening on {} open interface(s) for {duration}s... Press your test key now!",
+                handles.len()
+            );
+            let start = Instant::now();
+            let limit = Duration::from_secs(duration);
+            let mut buf = [0u8; 64];
+
+            while start.elapsed() < limit {
+                let mut got_any = false;
+                for h in &handles {
+                    match h.dev.read(&mut buf) {
+                        Ok(n) if n > 0 => {
+                            got_any = true;
+                            let hex: String = buf[..n]
+                                .iter()
+                                .map(|b| format!("{b:02x}"))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            println!(
+                                "[{:6.2}s] iface={} (up=0x{:04x} u=0x{:04x}) len={:2}: {hex}",
+                                start.elapsed().as_secs_f32(),
+                                h.interface_number,
+                                h.usage_page,
+                                h.usage,
+                                n
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                if !got_any {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+
+            if let Some((kb, baseline)) = revert_base {
+                println!("\nAuto-reverting base keymap to baseline...");
+                kb.write_base_keymap(&baseline)?;
+                println!("Reverted cleanly!");
+            }
             return Ok(());
         }
         _ => {}
@@ -483,7 +581,9 @@ fn run() -> Result<(), String> {
             println!("Baseline restore complete.");
         }
 
-        Commands::ListKeys | Commands::ListModes | Commands::DumpBaseline => unreachable!(),
+        Commands::ListKeys | Commands::ListModes | Commands::DumpBaseline | Commands::Listen { .. } => {
+            unreachable!()
+        }
     }
 
     Ok(())

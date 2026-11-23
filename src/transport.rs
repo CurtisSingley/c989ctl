@@ -15,6 +15,66 @@ pub const CMD_FN_KEYMAP: u8 = 0x27;
 pub const CMD_RGB: u8 = 0x13;
 pub const CMD_SMART_WHEEL: u8 = 0x25;
 
+pub struct InterfaceHandle {
+    pub interface_number: i32,
+    pub usage_page: u16,
+    pub usage: u16,
+    pub dev: HidDevice,
+}
+
+pub struct InterfaceSummary {
+    pub interface_number: i32,
+    pub usage_page: u16,
+    pub usage: u16,
+    pub path: String,
+}
+
+pub fn list_interfaces() -> Result<Vec<InterfaceSummary>, String> {
+    let api = HidApi::new().map_err(|e| format!("HidApi init failed: {e}"))?;
+    let mut out = Vec::new();
+    for d in api
+        .device_list()
+        .filter(|d| d.vendor_id() == VID && d.product_id() == PID)
+    {
+        out.push(InterfaceSummary {
+            interface_number: d.interface_number(),
+            usage_page: d.usage_page(),
+            usage: d.usage(),
+            path: d.path().to_string_lossy().into_owned(),
+        });
+    }
+    Ok(out)
+}
+
+pub fn open_all_interfaces() -> Result<Vec<InterfaceHandle>, String> {
+    let api = HidApi::new().map_err(|e| format!("HidApi init failed: {e}"))?;
+    let mut handles = Vec::new();
+    for d in api
+        .device_list()
+        .filter(|d| d.vendor_id() == VID && d.product_id() == PID)
+    {
+        let path = d.path().to_string_lossy().into_owned();
+        match d.open_device(&api) {
+            Ok(dev) => {
+                let _ = dev.set_blocking_mode(false);
+                handles.push(InterfaceHandle {
+                    interface_number: d.interface_number(),
+                    usage_page: d.usage_page(),
+                    usage: d.usage(),
+                    dev,
+                });
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not open iface {} ({path}): {e}",
+                    d.interface_number()
+                );
+            }
+        }
+    }
+    Ok(handles)
+}
+
 pub struct C989 {
     dev: HidDevice,
 }
