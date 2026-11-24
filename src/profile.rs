@@ -27,21 +27,17 @@ pub struct Profile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActionSpec {
-    /// Launch an executable detached (e.g. `krita`, `vlc`).
     Launch {
         command: String,
         #[serde(default)]
         args: Vec<String>,
     },
-    /// Run a shell command via `sh -c` detached.
     Shell { command: String },
-    /// Type a literal text string (respects active X11 layout such as Dvorak via `xdotool`).
     Text {
         text: String,
         #[serde(default = "default_type_delay_ms")]
         delay_ms: u32,
     },
-    /// Play a sequence of key combos, text snippets, delays, or commands.
     Macro {
         steps: Vec<MacroStep>,
         #[serde(default = "default_type_delay_ms")]

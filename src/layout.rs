@@ -54,13 +54,9 @@ const fn locked_key(
     }
 }
 
-/// Complete physical key map for Cloud Nine C989 ErgoFSK (`<LayoutK89M>` in KeyboardLayout.xml).
-///
-/// The 10 left-side macro keys use their physical keycap labels:
-/// - Column 1 (top to bottom): `m1` (90), `m2` (18), `m3` (36), `m4` (54), `m5` (72, locked)
-/// - Column 2 (top to bottom): `m6` (17), `m7` (35), `m8` (53), `m9` (71), `m10` (89, locked)
+/// Physical key map for Cloud Nine C989 ErgoFSK (`<LayoutK89M>`).
+/// Left macro columns use physical keycap labels: M1..M5 (col 1), M6..M10 (col 2).
 pub const KEYS: &[KeyInfo] = &[
-    // Function row
     key("esc", "Esc", &["escape"], 1, 0x29, (122.0, 1.0, 50.0, 50.0)),
     key("f1", "F1", &[], 2, 0x3a, (186.0, 1.0, 50.0, 50.0)),
     key("f2", "F2", &[], 3, 0x3b, (238.0, 1.0, 50.0, 50.0)),
@@ -78,7 +74,6 @@ pub const KEYS: &[KeyInfo] = &[
     key("scrlk", "ScrLk", &["scroll_lock", "scrolllock"], 113, 0x47, (1027.0, 1.0, 50.0, 50.0)),
     key("pause", "Pause", &["break"], 115, 0x48, (1079.0, 1.0, 50.0, 50.0)),
 
-    // Number row + left macro row 1 + nav + numpad row 1
     key("m1", "M1", &["select_all", "selectall", "select-all"], 90, 0x81, (1.0, 78.0, 50.0, 50.0)),
     key("m6", "M6", &[], 17, 0x86, (53.0, 78.0, 50.0, 50.0)),
     key("grave", "~", &["~", "`", "tilde", "backtick"], 19, 0x35, (122.0, 78.0, 50.0, 50.0)),
@@ -103,7 +98,6 @@ pub const KEYS: &[KeyInfo] = &[
     key("kp_asterisk", "*", &["kp*", "kp_star", "kp_multiply", "num_asterisk"], 34, 0x55, (1254.0, 78.0, 50.0, 50.0)),
     key("kp_minus", "-", &["kp-", "num_minus", "kp_subtract"], 122, 0x56, (1306.0, 78.0, 50.0, 50.0)),
 
-    // QWERTY row + left macro row 2 + nav + numpad row 2
     key("m2", "M2", &["copy"], 18, 0x82, (1.0, 130.0, 50.0, 50.0)),
     key("m7", "M7", &[], 35, 0x87, (53.0, 130.0, 50.0, 50.0)),
     key("tab", "Tab", &[], 37, 0x2b, (122.0, 130.0, 75.0, 50.0)),
@@ -127,7 +121,6 @@ pub const KEYS: &[KeyInfo] = &[
     key("kp_8", "8", &["kp8", "num8"], 51, 0x60, (1202.0, 130.0, 50.0, 50.0)),
     key("kp_9", "9", &["kp9", "num9"], 52, 0x61, (1254.0, 130.0, 50.0, 50.0)),
 
-    // Home row + left macro row 3 + numpad row 3
     key("m3", "M3", &["paste"], 36, 0x83, (1.0, 182.0, 50.0, 50.0)),
     key("m8", "M8", &[], 53, 0x88, (53.0, 182.0, 50.0, 50.0)),
     key("caps", "Caps", &["capslock", "caps_lock", "caps-lock"], 55, 0x39, (122.0, 182.0, 87.0, 50.0)),
@@ -148,7 +141,6 @@ pub const KEYS: &[KeyInfo] = &[
     key("kp_6", "6", &["kp6", "num6"], 70, 0x5e, (1254.0, 182.0, 50.0, 50.0)),
     key("kp_plus", "+", &["kp+", "num_plus", "kp_add"], 123, 0x57, (1306.0, 130.0, 50.0, 102.0)),
 
-    // Bottom alpha row + left macro row 4 + up arrow + numpad row 4
     key("m4", "M4", &["cut"], 54, 0x84, (1.0, 234.0, 50.0, 50.0)),
     key("m9", "M9", &[], 71, 0x89, (53.0, 234.0, 50.0, 50.0)),
     key("lshift", "Shift", &["left_shift", "left-shift"], 73, 0xe1, (122.0, 234.0, 113.0, 50.0)),
@@ -163,12 +155,11 @@ pub const KEYS: &[KeyInfo] = &[
     key("period", ".", &[".", ">", "dot"], 82, 0x37, (713.0, 234.0, 50.0, 50.0)),
     key("slash", "/", &["/", "?"], 83, 0x38, (765.0, 234.0, 50.0, 50.0)),
     key("rshift", "Shift", &["right_shift", "right-shift"], 84, 0xe5, (817.0, 234.0, 139.0, 50.0)),
-    key("up", "↑", &["arrow_up"], 101, 0x52, (1027.0, 234.0, 50.0, 50.0)),
+    key("up", "Up", &["arrow_up"], 101, 0x52, (1027.0, 234.0, 50.0, 50.0)),
     key("kp_1", "1", &["kp1", "num1"], 86, 0x59, (1150.0, 234.0, 50.0, 50.0)),
     key("kp_2", "2", &["kp2", "num2"], 87, 0x5a, (1202.0, 234.0, 50.0, 50.0)),
     key("kp_3", "3", &["kp3", "num3"], 88, 0x5b, (1254.0, 234.0, 50.0, 50.0)),
 
-    // Bottom row
     locked_key("m5", "M5/Fn", &["lfn", "left_fn", "left-fn"], 72, 0x85, (1.0, 286.0, 50.0, 50.0)),
     locked_key("m10", "M10", &["light", "led", "backlight"], 89, 0x8a, (53.0, 286.0, 50.0, 50.0)),
     key("lctrl", "Ctrl", &["left_ctrl", "left-ctrl"], 91, 0xe0, (122.0, 286.0, 61.0, 50.0)),
@@ -180,9 +171,9 @@ pub const KEYS: &[KeyInfo] = &[
     locked_key("rfn", "Fn", &["fn", "right_fn", "right-fn"], 96, 0xaf, (769.0, 286.0, 61.0, 50.0)),
     key("app", "App", &["menu", "context"], 97, 0x65, (832.0, 286.0, 61.0, 50.0)),
     key("rctrl", "Ctrl", &["right_ctrl", "right-ctrl"], 98, 0xe4, (895.0, 286.0, 61.0, 50.0)),
-    key("left", "←", &["arrow_left"], 99, 0x50, (975.0, 286.0, 50.0, 50.0)),
-    key("down", "↓", &["arrow_down"], 100, 0x51, (1027.0, 286.0, 50.0, 50.0)),
-    key("right", "→", &["arrow_right"], 102, 0x4f, (1079.0, 286.0, 50.0, 50.0)),
+    key("left", "Left", &["arrow_left"], 99, 0x50, (975.0, 286.0, 50.0, 50.0)),
+    key("down", "Down", &["arrow_down"], 100, 0x51, (1027.0, 286.0, 50.0, 50.0)),
+    key("right", "Right", &["arrow_right"], 102, 0x4f, (1079.0, 286.0, 50.0, 50.0)),
     key("kp_0", "0", &["kp0", "num0"], 104, 0x62, (1150.0, 286.0, 102.0, 50.0)),
     key("kp_dot", ".", &["kp.", "kp_period", "kp_del", "num_dot"], 105, 0x63, (1254.0, 286.0, 50.0, 50.0)),
     key("kp_enter", "Enter", &["kpenter", "num_enter"], 106, 0x58, (1306.0, 234.0, 50.0, 102.0)),

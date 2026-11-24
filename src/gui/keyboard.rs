@@ -14,6 +14,7 @@ pub enum KeyboardViewMode {
 
 pub struct KeyboardCanvas<'a, Message> {
     pub view_mode: KeyboardViewMode,
+    pub is_fn_layer: bool,
     pub selected_key: Option<&'static str>,
     pub active_bindings: &'a BTreeMap<String, String>,
     pub rgb_mode: RgbMode,
@@ -80,10 +81,10 @@ fn short_action_label(action: &str) -> String {
         "mute" => "Mute".into(),
         "scrlk" => "ScrLk".into(),
         "insert" => "Ins".into(),
-        "up" => "↑".into(),
-        "down" => "↓".into(),
-        "left" => "←".into(),
-        "right" => "→".into(),
+        "up" => "Up".into(),
+        "down" => "Dn".into(),
+        "left" => "Lt".into(),
+        "right" => "Rt".into(),
         other => {
             if let Some(slot) = other.strip_prefix("macro:") {
                 format!("M:{slot}")
@@ -170,20 +171,65 @@ impl<'a, Message: 'a> canvas::Program<Message> for KeyboardCanvas<'a, Message> {
     ) -> Vec<Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let (scale, ox, oy) = Self::compute_transform(bounds);
+        let fn_active = self.view_mode == KeyboardViewMode::Layout && self.is_fn_layer;
 
-        // Keyboard chassis background
         let bg = Path::rounded_rectangle(
             Point::new(ox - 8.0, oy - 8.0),
             Size::new(LAYOUT_WIDTH * scale + 16.0, LAYOUT_HEIGHT * scale + 16.0),
             border::Radius::from(10.0),
         );
-        frame.fill(&bg, Color::from_rgb8(24, 26, 32));
+        frame.fill(
+            &bg,
+            if fn_active {
+                Color::from_rgb8(34, 24, 48)
+            } else {
+                Color::from_rgb8(24, 26, 32)
+            },
+        );
         frame.stroke(
             &bg,
             Stroke::default()
-                .with_color(Color::from_rgb8(52, 56, 68))
-                .with_width(1.5),
+                .with_color(if fn_active {
+                    Color::from_rgb8(170, 95, 255)
+                } else {
+                    Color::from_rgb8(52, 56, 68)
+                })
+                .with_width(if fn_active { 3.5 } else { 1.5 }),
         );
+
+        // Layer badge in the unused top-left area above M1/M6
+        if self.view_mode == KeyboardViewMode::Layout {
+            let badge_w = 104.0 * scale;
+            let badge_h = 34.0 * scale;
+            let badge_x = ox + 1.0 * scale;
+            let badge_y = oy + 10.0 * scale;
+            let badge = Path::rounded_rectangle(
+                Point::new(badge_x, badge_y),
+                Size::new(badge_w, badge_h),
+                border::Radius::from(6.0 * scale),
+            );
+            frame.fill(
+                &badge,
+                if fn_active {
+                    Color::from_rgb8(122, 54, 204)
+                } else {
+                    Color::from_rgb8(42, 46, 56)
+                },
+            );
+            frame.fill_text(Text {
+                content: if fn_active { "FN LAYER" } else { "BASE LAYER" }.into(),
+                position: Point::new(badge_x + badge_w * 0.5, badge_y + badge_h * 0.5),
+                color: if fn_active {
+                    Color::WHITE
+                } else {
+                    Color::from_rgb8(175, 182, 196)
+                },
+                size: (12.0 * scale).clamp(8.5, 12.0).into(),
+                horizontal_alignment: alignment::Horizontal::Center,
+                vertical_alignment: alignment::Vertical::Center,
+                ..Text::default()
+            });
+        }
 
         for k in KEYS {
             let (rx, ry, rw, rh) = k.rect;
@@ -202,6 +248,8 @@ impl<'a, Message: 'a> canvas::Program<Message> for KeyboardCanvas<'a, Message> {
                         let is_macro = act.to_lowercase().starts_with("macro:");
                         let fill = if is_macro {
                             Color::from_rgb8(22, 118, 130)
+                        } else if fn_active {
+                            Color::from_rgb8(126, 66, 196)
                         } else {
                             Color::from_rgb8(196, 94, 24)
                         };
@@ -286,7 +334,6 @@ impl<'a, Message: 'a> canvas::Program<Message> for KeyboardCanvas<'a, Message> {
                     .with_width(stroke_w),
             );
 
-            // Keycap label
             let base_font = (13.0 * scale).clamp(8.5, 13.0);
             if let Some(sub) = sub_label {
                 frame.fill_text(Text {

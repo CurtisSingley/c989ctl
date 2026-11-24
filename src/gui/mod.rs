@@ -1,6 +1,6 @@
 mod keyboard;
 
-use crate::daemon::{DaemonController, DaemonSnapshot, execute_action};
+use crate::daemon::{DaemonController, DaemonSnapshot};
 use crate::layout::{
     KEYS, ZONE_ARROWS, ZONE_MACROS, ZONE_NUMBERS, ZONE_NUMPAD, ZONE_WASD, find_key,
 };
@@ -14,8 +14,8 @@ use crate::protocol::{
 };
 use crate::transport::{C989, list_interfaces};
 use iced::widget::{
-    button, checkbox, column, container, horizontal_rule, horizontal_space, pick_list, row,
-    scrollable, slider, text, text_input, vertical_rule,
+    button, center, checkbox, column, container, horizontal_rule, horizontal_space, mouse_area,
+    opaque, pick_list, row, scrollable, slider, stack, text, text_input, vertical_rule,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Subscription, Task, Theme};
 use keyboard::{KeyboardCanvas, KeyboardViewMode};
@@ -165,20 +165,19 @@ struct App {
     tab: Tab,
     layer: EditLayer,
 
-    // Hardware status
     device_connected: bool,
     status_message: String,
     status_is_error: bool,
 
-    // Profile storage
     profiles_dir: PathBuf,
     profile_entries: Vec<(String, PathBuf)>,
     current_path: Option<PathBuf>,
     profile: Profile,
     dirty: bool,
     new_profile_name: String,
+    renaming_profile: Option<(PathBuf, String)>,
+    confirm_delete_profile: Option<(String, PathBuf)>,
 
-    // Layout editor state
     selected_key: &'static str,
     action_input: String,
     mod_ctrl: bool,
@@ -186,20 +185,17 @@ struct App {
     mod_alt: bool,
     mod_win: bool,
 
-    // RGB editor state
     rgb_r: u8,
     rgb_g: u8,
     rgb_b: u8,
     rgb_hex_input: String,
 
-    // Smart Wheel editor state
     selected_wheel_slot: usize,
     wheel_r: u8,
     wheel_g: u8,
     wheel_b: u8,
     wheel_hex_input: String,
 
-    // Action/Macro editor state
     edit_action_slot: String,
     edit_action_kind: ActionKindChoice,
     edit_action_command: String,
@@ -208,10 +204,7 @@ struct App {
     edit_action_delay: String,
     edit_macro_steps: String,
 
-    // 15-second auto-revert safety net
     pending_revert: Option<PendingRevert>,
-
-    // Opt-in background macro/launcher listener (OFF by default)
     daemon: Option<DaemonController>,
     daemon_snapshot: DaemonSnapshot,
 }
@@ -223,20 +216,22 @@ enum Message {
     SelectTab(Tab),
     SelectLayer(EditLayer),
 
-    // Profiles
     LoadProfile(PathBuf),
     SaveProfile,
     NewProfileNameChanged(String),
     CreateProfile,
     DuplicateProfile,
-    DeleteCurrentProfile,
+    StartRenameProfile(PathBuf, String),
+    RenameProfileChanged(String),
+    CommitRenameProfile,
+    RequestDeleteCurrentProfile,
+    ConfirmDeleteProfile,
+    CancelDeleteProfile,
     ResetProfileToBaseline,
 
-    // Keyboard canvas interaction
     KeyLeftClicked(&'static str),
     KeyRightClicked(&'static str),
 
-    // Layout editor
     ActionInputChanged(String),
     ToggleModCtrl(bool),
     ToggleModShift(bool),
@@ -246,7 +241,6 @@ enum Message {
     QuickSetAction(String),
     ClearKeyBinding,
 
-    // RGB editor
     RgbModeSelected(RgbModeChoice),
     RgbRChanged(u8),
     RgbGChanged(u8),
@@ -258,7 +252,6 @@ enum Message {
     RgbFullSpectrumToggled(bool),
     RgbFillZone(LedZone),
 
-    // Smart Wheel editor
     WheelSlotSelected(usize),
     WheelModeSelected(usize, WheelModeChoice),
     WheelRChanged(u8),
@@ -268,7 +261,6 @@ enum Message {
     WheelSwatch((u8, u8, u8)),
     ResetWheelDefaults,
 
-    // Macros & Actions editor + opt-in listener
     ToggleDaemon,
     ActionSlotChanged(String),
     ActionKindSelected(ActionKindChoice),
@@ -278,11 +270,8 @@ enum Message {
     ActionDelayChanged(String),
     ActionStepsChanged(String),
     SaveActionSlot,
-    LoadActionIntoEditor(u8),
     DeleteActionSlot(u8),
-    TestActionSlot(u8),
 
-    // Hardware writes & safety net
     ApplyFullProfile,
     ApplyLayoutOnly,
     ApplyRgbOnly,
@@ -297,14 +286,11 @@ impl App {
         let profiles_dir = default_profiles_dir();
         let _ = std::fs::create_dir_all(&profiles_dir);
 
-        // Seed default.toml in ~/.config/c989ctl/profiles if empty
         if discover_profiles(&profiles_dir).is_empty() {
-            let repo_profiles = PathBuf::from("profiles");
-            let repo_list = discover_profiles(&repo_profiles);
+            let repo_list = discover_profiles(&PathBuf::from("profiles"));
             if !repo_list.is_empty() {
                 for (stem, src) in repo_list {
-                    let dst = profiles_dir.join(format!("{stem}.toml"));
-                    let _ = std::fs::copy(src, dst);
+                    let _ = std::fs::copy(src, profiles_dir.join(format!("{stem}.toml")));
                 }
             } else {
                 let _ = Profile::baseline().save(&profiles_dir.join("default.toml"));
@@ -336,7 +322,7 @@ impl App {
             status_message: if device_connected {
                 "Cloud Nine C989 detected (0c45:8006). Ready.".into()
             } else {
-                "C989 not detected — check USB connection & udev rule (70-c989.rules).".into()
+                "C989 not detected - check USB connection & udev rule (70-c989.rules).".into()
             },
             status_is_error: !device_connected,
             profiles_dir,
@@ -345,6 +331,8 @@ impl App {
             profile,
             dirty: false,
             new_profile_name: String::new(),
+            renaming_profile: None,
+            confirm_delete_profile: None,
             selected_key: "m6",
             action_input: String::new(),
             mod_ctrl: false,
@@ -366,7 +354,7 @@ impl App {
             edit_action_args: String::new(),
             edit_action_text: "abcd".into(),
             edit_action_delay: "12".into(),
-            edit_macro_steps: "text:hi\ndelay:50\nkey:Return\ntext:c989".into(),
+            edit_macro_steps: "text:hi; delay:50; key:Return; text:c989".into(),
             pending_revert: None,
             daemon: None,
             daemon_snapshot: DaemonSnapshot {
@@ -382,7 +370,7 @@ impl App {
 
     fn title(&self) -> String {
         let star = if self.dirty { " *" } else { "" };
-        format!("c989ctl — Cloud Nine C989 ErgoFSK [{}]{star}", self.profile.name)
+        format!("c989ctl - Cloud Nine C989 ErgoFSK [{}]{star}", self.profile.name)
     }
 
     fn theme(&self) -> Theme {
@@ -400,7 +388,6 @@ impl App {
     fn sync_editors_from_profile(&mut self) {
         ensure_profile_sections(&mut self.profile);
 
-        // Sync RGB inputs
         if let Some(rgb) = &self.profile.rgb {
             let (r, g, b) = parse_color(&rgb.color).unwrap_or((0, 0, 255));
             self.rgb_r = r;
@@ -409,10 +396,7 @@ impl App {
             self.rgb_hex_input = format_hex_color((r, g, b));
         }
 
-        // Sync selected wheel slot color
         self.sync_wheel_color_inputs();
-
-        // Sync selected key action input
         self.sync_selected_key_input();
     }
 
@@ -429,12 +413,11 @@ impl App {
     }
 
     fn sync_selected_key_input(&mut self) {
-        let current = self
+        self.action_input = self
             .active_layer_map()
             .get(self.selected_key)
             .cloned()
             .unwrap_or_default();
-        self.action_input = current;
         self.mod_ctrl = false;
         self.mod_shift = false;
         self.mod_alt = false;
@@ -531,7 +514,7 @@ impl App {
                 if self.device_connected {
                     self.set_ok("Cloud Nine C989 connected (0c45:8006).");
                 } else {
-                    self.set_err("C989 not found — check USB connection/udev permissions.");
+                    self.set_err("C989 not found - check USB connection/udev permissions.");
                 }
             }
 
@@ -544,18 +527,21 @@ impl App {
                 self.sync_selected_key_input();
             }
 
-            Message::LoadProfile(path) => match Profile::load(&path) {
-                Ok(mut prof) => {
-                    ensure_profile_sections(&mut prof);
-                    self.profile = prof;
-                    self.current_path = Some(path.clone());
-                    self.dirty = false;
-                    self.sync_editors_from_profile();
-                    self.restart_daemon_if_running();
-                    self.set_ok(format!("Loaded profile '{}'.", self.profile.name));
+            Message::LoadProfile(path) => {
+                self.renaming_profile = None;
+                match Profile::load(&path) {
+                    Ok(mut prof) => {
+                        ensure_profile_sections(&mut prof);
+                        self.profile = prof;
+                        self.current_path = Some(path);
+                        self.dirty = false;
+                        self.sync_editors_from_profile();
+                        self.restart_daemon_if_running();
+                        self.set_ok(format!("Loaded profile '{}'.", self.profile.name));
+                    }
+                    Err(e) => self.set_err(e),
                 }
-                Err(e) => self.set_err(e),
-            },
+            }
 
             Message::SaveProfile => {
                 let path = self.current_path.clone().unwrap_or_else(|| {
@@ -619,29 +605,99 @@ impl App {
                 }
             }
 
-            Message::DeleteCurrentProfile => {
+            Message::StartRenameProfile(path, current_name) => {
+                self.renaming_profile = Some((path, current_name));
+            }
+
+            Message::RenameProfileChanged(new_name) => {
+                if let Some((_, ref mut name)) = self.renaming_profile {
+                    *name = new_name;
+                }
+            }
+
+            Message::CommitRenameProfile => {
+                let Some((old_path, raw_name)) = self.renaming_profile.take() else {
+                    return Task::none();
+                };
+                let new_name = raw_name.trim().to_string();
+                if new_name.is_empty() {
+                    self.set_err("Profile name cannot be empty.");
+                    return Task::none();
+                }
+                let new_path = self
+                    .profiles_dir
+                    .join(format!("{}.toml", sanitize_filename(&new_name)));
+                if new_path != old_path && new_path.exists() {
+                    self.set_err(format!("A profile named '{}' already exists.", new_name));
+                    return Task::none();
+                }
+
+                let is_current = self.current_path.as_ref() == Some(&old_path);
+                let mut target_prof = if is_current {
+                    self.profile.clone()
+                } else {
+                    match Profile::load(&old_path) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            self.set_err(e);
+                            return Task::none();
+                        }
+                    }
+                };
+                target_prof.name = new_name.clone();
+
+                if let Err(e) = target_prof.save(&new_path) {
+                    self.set_err(e);
+                    return Task::none();
+                }
+                if new_path != old_path {
+                    let _ = std::fs::remove_file(&old_path);
+                }
+
+                if is_current {
+                    self.profile.name = new_name.clone();
+                    self.current_path = Some(new_path);
+                    self.dirty = false;
+                }
+                self.profile_entries = discover_profiles(&self.profiles_dir);
+                self.set_ok(format!("Renamed profile to '{new_name}'."));
+            }
+
+            Message::RequestDeleteCurrentProfile => {
                 if self.profile_entries.len() <= 1 {
                     self.set_err("Cannot delete the last remaining profile.");
                     return Task::none();
                 }
-                if let Some(path) = self.current_path.take() {
-                    let deleted_name = self.profile.name.clone();
-                    match std::fs::remove_file(&path) {
-                        Ok(()) => {
-                            self.profile_entries = discover_profiles(&self.profiles_dir);
-                            if let Some((_, first_path)) = self.profile_entries.first().cloned() {
-                                if let Ok(mut prof) = Profile::load(&first_path) {
-                                    ensure_profile_sections(&mut prof);
-                                    self.profile = prof;
-                                    self.current_path = Some(first_path);
-                                    self.sync_editors_from_profile();
-                                }
+                if let Some(path) = self.current_path.clone() {
+                    self.confirm_delete_profile = Some((self.profile.name.clone(), path));
+                }
+            }
+
+            Message::CancelDeleteProfile => {
+                self.confirm_delete_profile = None;
+            }
+
+            Message::ConfirmDeleteProfile => {
+                let Some((deleted_name, path)) = self.confirm_delete_profile.take() else {
+                    return Task::none();
+                };
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {
+                        self.profile_entries = discover_profiles(&self.profiles_dir);
+                        if let Some((_, first_path)) = self.profile_entries.first().cloned() {
+                            if let Ok(mut prof) = Profile::load(&first_path) {
+                                ensure_profile_sections(&mut prof);
+                                self.profile = prof;
+                                self.current_path = Some(first_path);
+                                self.sync_editors_from_profile();
                             }
-                            self.dirty = false;
-                            self.set_ok(format!("Deleted profile '{deleted_name}'."));
+                        } else {
+                            self.current_path = None;
                         }
-                        Err(e) => self.set_err(format!("Failed to delete profile: {e}")),
+                        self.dirty = false;
+                        self.set_ok(format!("Deleted profile '{deleted_name}'."));
                     }
+                    Err(e) => self.set_err(format!("Failed to delete profile: {e}")),
                 }
             }
 
@@ -683,9 +739,7 @@ impl App {
                 }
             }
 
-            Message::ActionInputChanged(s) => {
-                self.action_input = s;
-            }
+            Message::ActionInputChanged(s) => self.action_input = s,
             Message::ToggleModCtrl(v) => self.mod_ctrl = v,
             Message::ToggleModShift(v) => self.mod_shift = v,
             Message::ToggleModAlt(v) => self.mod_alt = v,
@@ -929,47 +983,11 @@ impl App {
                 ));
             }
 
-            Message::LoadActionIntoEditor(slot) => {
-                if let Some(spec) = self.profile.actions.get(&slot.to_string()).cloned() {
-                    self.edit_action_slot = slot.to_string();
-                    match spec {
-                        ActionSpec::Launch { command, args } => {
-                            self.edit_action_kind = ActionKindChoice::Launch;
-                            self.edit_action_command = command;
-                            self.edit_action_args = args.join(" ");
-                        }
-                        ActionSpec::Shell { command } => {
-                            self.edit_action_kind = ActionKindChoice::Shell;
-                            self.edit_action_command = command;
-                        }
-                        ActionSpec::Text { text, delay_ms } => {
-                            self.edit_action_kind = ActionKindChoice::Text;
-                            self.edit_action_text = text;
-                            self.edit_action_delay = delay_ms.to_string();
-                        }
-                        ActionSpec::Macro { steps, delay_ms } => {
-                            self.edit_action_kind = ActionKindChoice::Macro;
-                            self.edit_action_delay = delay_ms.to_string();
-                            self.edit_macro_steps = format_macro_steps_text(&steps);
-                        }
-                    }
-                }
-            }
-
             Message::DeleteActionSlot(slot) => {
                 self.profile.actions.remove(&slot.to_string());
                 self.dirty = true;
                 self.restart_daemon_if_running();
                 self.set_ok(format!("Deleted action slot {slot}."));
-            }
-
-            Message::TestActionSlot(slot) => {
-                if let Some(spec) = self.profile.actions.get(&slot.to_string()).cloned() {
-                    match execute_action(slot, &spec) {
-                        Ok(()) => self.set_ok(format!("Executed test for action slot {slot}.")),
-                        Err(e) => self.set_err(e),
-                    }
-                }
             }
 
             Message::ApplyFullProfile => {
@@ -1127,9 +1145,7 @@ impl App {
                 }
             }
 
-            Message::RevertNow => {
-                self.perform_revert();
-            }
+            Message::RevertNow => self.perform_revert(),
 
             Message::RestoreSafeBaseline => {
                 self.pending_revert = None;
@@ -1232,21 +1248,73 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let sidebar = self.view_sidebar();
-        let main_area = self.view_main();
-
-        row![sidebar, vertical_rule(1), main_area]
+        let base_ui: Element<'_, Message> = row![self.view_sidebar(), vertical_rule(1), self.view_main()]
             .height(Length::Fill)
             .width(Length::Fill)
-            .into()
+            .into();
+
+        if let Some((ref name, _)) = self.confirm_delete_profile {
+            let dialog = container(
+                column![
+                    text(format!("Delete profile '{name}', are you sure?")).size(16),
+                    row![
+                        horizontal_space(),
+                        button(text("Cancel").size(13))
+                            .style(button::secondary)
+                            .on_press(Message::CancelDeleteProfile),
+                        button(text("Delete").size(13))
+                            .style(button::danger)
+                            .on_press(Message::ConfirmDeleteProfile),
+                    ]
+                    .spacing(10),
+                ]
+                .spacing(18),
+            )
+            .padding(20)
+            .width(Length::Fixed(380.0))
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(34, 38, 46))),
+                border: Border {
+                    color: Color::from_rgb8(110, 120, 140),
+                    width: 1.5,
+                    radius: 8.0.into(),
+                },
+                ..Default::default()
+            });
+
+            let backdrop = mouse_area(
+                center(opaque(dialog))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.65))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::CancelDeleteProfile);
+
+            stack![base_ui, backdrop].into()
+        } else {
+            base_ui
+        }
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {
-        let hw_badge = if self.device_connected {
-            text("● C989 Connected").size(13).color(Color::from_rgb8(80, 220, 120))
+        let dot_color = if self.device_connected {
+            Color::from_rgb8(80, 220, 120)
         } else {
-            text("○ C989 Disconnected").size(13).color(Color::from_rgb8(240, 110, 100))
+            Color::from_rgb8(240, 110, 100)
         };
+        let hw_badge = row![
+            status_dot(dot_color),
+            text(if self.device_connected {
+                "C989 Connected"
+            } else {
+                "Disconnected"
+            })
+            .size(12)
+            .color(dot_color),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
 
         let nav = column![
             nav_button("Layout (Base / Fn)", Tab::Layout, self.tab),
@@ -1258,6 +1326,25 @@ impl App {
 
         let mut prof_list = column![].spacing(4);
         for (name, path) in &self.profile_entries {
+            if let Some((renaming_path, edit_val)) = &self.renaming_profile {
+                if renaming_path == path {
+                    let rename_row = row![
+                        text_input("Profile name", edit_val)
+                            .on_input(Message::RenameProfileChanged)
+                            .on_submit(Message::CommitRenameProfile)
+                            .size(12)
+                            .width(Length::Fill),
+                        button(text("Save").size(12))
+                            .style(button::success)
+                            .on_press(Message::CommitRenameProfile),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center);
+                    prof_list = prof_list.push(rename_row);
+                    continue;
+                }
+            }
+
             let is_active = self.current_path.as_ref() == Some(path);
             let label = if is_active && self.dirty {
                 format!("{name} *")
@@ -1272,7 +1359,9 @@ impl App {
                     button::secondary
                 })
                 .on_press(Message::LoadProfile(path.clone()));
-            prof_list = prof_list.push(btn);
+            let item = mouse_area(btn)
+                .on_right_press(Message::StartRenameProfile(path.clone(), name.clone()));
+            prof_list = prof_list.push(item);
         }
 
         let new_prof_row = row![
@@ -1295,7 +1384,7 @@ impl App {
                 .on_press(Message::DuplicateProfile)
                 .style(button::secondary),
             button(text("Del").size(12))
-                .on_press(Message::DeleteCurrentProfile)
+                .on_press(Message::RequestDeleteCurrentProfile)
                 .style(button::danger),
         ]
         .spacing(4);
@@ -1316,7 +1405,8 @@ impl App {
             row![
                 hw_badge,
                 horizontal_space(),
-                button(text("↻").size(12))
+                button(text("Refresh").size(11))
+                    .padding([4, 8])
                     .on_press(Message::RefreshHardware)
                     .style(button::secondary),
             ]
@@ -1324,7 +1414,14 @@ impl App {
             horizontal_rule(1),
             nav,
             horizontal_rule(1),
-            text("Profiles").size(14),
+            row![
+                text("Profiles").size(14),
+                horizontal_space(),
+                text("Right-click to rename")
+                    .size(10)
+                    .color(Color::from_rgb8(130, 136, 150)),
+            ]
+            .align_y(Alignment::Center),
             scrollable(prof_list).height(Length::FillPortion(1)),
             new_prof_row,
             prof_actions,
@@ -1359,16 +1456,19 @@ impl App {
         ]
         .spacing(8)
         .padding(12)
-        .width(Length::Fixed(235.0))
+        .width(Length::Fixed(245.0))
         .height(Length::Fill);
 
         container(content).into()
     }
 
     fn view_main(&self) -> Element<'_, Message> {
-        let mut col = column![].spacing(10).padding(14).width(Length::Fill).height(Length::Fill);
+        let mut col = column![]
+            .spacing(10)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
-        // 15-second auto-revert safety banner (always at top when active!)
         if let Some(pending) = &self.pending_revert {
             let banner = container(
                 row![
@@ -1403,7 +1503,6 @@ impl App {
             col = col.push(banner);
         }
 
-        // Visual interactive C989 keyboard canvas
         let rgb_prof = self.profile.rgb.as_ref().unwrap();
         let rgb_mode = RgbMode::parse(&rgb_prof.mode).unwrap_or(RgbMode::Static);
         let rgb_color = parse_color(&rgb_prof.color).unwrap_or((0, 0, 255));
@@ -1419,6 +1518,7 @@ impl App {
 
         let canvas = KeyboardCanvas {
             view_mode: kb_view_mode,
+            is_fn_layer: self.layer == EditLayer::Fn,
             selected_key: Some(self.selected_key),
             active_bindings: self.active_layer_map(),
             rgb_mode,
@@ -1433,7 +1533,6 @@ impl App {
         col = col.push(canvas);
         col = col.push(horizontal_rule(1));
 
-        // Tab editor body
         let body = match self.tab {
             Tab::Layout => self.view_layout_tab(),
             Tab::Lighting => self.view_lighting_tab(),
@@ -1442,7 +1541,6 @@ impl App {
         };
         col = col.push(scrollable(body).height(Length::Fill));
 
-        // Status bar
         let status_color = if self.status_is_error {
             Color::from_rgb8(255, 120, 110)
         } else {
@@ -1731,7 +1829,7 @@ impl App {
     fn view_wheel_tab(&self) -> Element<'_, Message> {
         let slots = self.profile.smart_wheel.as_ref().unwrap();
         let top_bar = row![
-            text("Smart Wheel (04 25 — applies immediately without 04 f0)").size(15),
+            text("Smart Wheel (04 25 - applies immediately without 04 f0)").size(15),
             horizontal_space(),
             button(text("Reset Defaults").size(13))
                 .style(button::secondary)
@@ -1879,7 +1977,6 @@ impl App {
             ..Default::default()
         });
 
-        // Configured action slots list
         let mut actions_list = column![text("Configured Action Slots (`[actions.<slot>]`):").size(14)].spacing(6);
         let parsed = self.profile.parsed_actions().unwrap_or_default();
         if parsed.is_empty() {
@@ -1902,12 +1999,6 @@ impl App {
                     row![
                         text(format!("Slot {slot:3}")).size(13).width(Length::Fixed(64.0)),
                         text(summary).size(13).width(Length::Fill),
-                        button(text("Test").size(12))
-                            .style(button::secondary)
-                            .on_press(Message::TestActionSlot(*slot)),
-                        button(text("Edit").size(12))
-                            .style(button::primary)
-                            .on_press(Message::LoadActionIntoEditor(*slot)),
                         button(text("Del").size(12))
                             .style(button::danger)
                             .on_press(Message::DeleteActionSlot(*slot)),
@@ -1918,7 +2009,6 @@ impl App {
             }
         }
 
-        // Action editor form
         let mut editor = column![
             text("Add / Edit Action Slot").size(14),
             row![
@@ -1989,13 +2079,11 @@ impl App {
                 );
             }
             ActionKindChoice::Macro => {
-                editor = editor.push(
-                    row![
-                        text("Steps (;-separated, e.g. text:hi; delay:50; key:Return; text:c989):")
-                            .size(12)
-                            .color(Color::from_rgb8(165, 172, 185)),
-                    ],
-                );
+                editor = editor.push(row![
+                    text("Steps (;-separated, e.g. text:hi; delay:50; key:Return; text:c989):")
+                        .size(12)
+                        .color(Color::from_rgb8(165, 172, 185)),
+                ]);
                 editor = editor.push(
                     row![
                         text_input(
@@ -2031,6 +2119,21 @@ impl App {
 
         col.into()
     }
+}
+
+fn status_dot<'a>(color: Color) -> Element<'a, Message> {
+    container(text(""))
+        .width(Length::Fixed(9.0))
+        .height(Length::Fixed(9.0))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(color)),
+            border: Border {
+                radius: 5.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 fn nav_button(label: &str, tab: Tab, current: Tab) -> Element<'_, Message> {
@@ -2178,23 +2281,4 @@ fn parse_macro_steps_text(input: &str) -> Result<Vec<MacroStep>, String> {
         return Err("macro must contain at least one step".into());
     }
     Ok(steps)
-}
-
-fn format_macro_steps_text(steps: &[MacroStep]) -> String {
-    steps
-        .iter()
-        .map(|s| match s {
-            MacroStep::Key { key } => format!("key:{key}"),
-            MacroStep::Text { text } => format!("text:{text}"),
-            MacroStep::Delay { delay_ms } => format!("delay:{delay_ms}"),
-            MacroStep::Exec { exec, args } => {
-                if args.is_empty() {
-                    format!("exec:{exec}")
-                } else {
-                    format!("exec:{exec} {}", args.join(" "))
-                }
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("; ")
 }

@@ -26,7 +26,6 @@ fn spawn_detached(program: &str, args: &[String]) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("failed to launch '{program}': {e}"))?;
 
-    // Reap the child in a background thread so we never leave zombies
     thread::spawn(move || {
         let _ = child.wait();
     });
