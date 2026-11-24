@@ -226,6 +226,20 @@ pub fn key_by_index(index: usize) -> Option<&'static KeyInfo> {
     KEYS.iter().find(|k| k.key_index == index)
 }
 
+pub fn firmware_default_hint(name: &str) -> Option<&'static str> {
+    match name {
+        "m1" => Some("Ctrl+A"),
+        "m2" => Some("Ctrl+C"),
+        "m3" => Some("Ctrl+V"),
+        "m4" => Some("Ctrl+X"),
+        "m6" => Some("Ctrl+1"),
+        "m7" => Some("Ctrl+2"),
+        "m8" => Some("Ctrl+3"),
+        "m9" => Some("Ctrl+4"),
+        _ => None,
+    }
+}
+
 /// Resolve a key name to its standard USB HID Keyboard/Keypad Usage ID (Usage Page 0x07).
 pub fn hid_usage_by_name(name: &str) -> Option<u8> {
     let q = name.trim().to_lowercase();

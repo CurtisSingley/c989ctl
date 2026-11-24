@@ -191,7 +191,9 @@ pub fn build_fn_keymap(entries: &[(usize, KeyEntry)]) -> [[u8; 64]; KEYMAP_PAGES
 
 pub fn baseline_base_entries() -> Vec<(usize, KeyEntry)> {
     vec![
+        (17, KeyEntry::Disabled),
         (18, KeyEntry::MouseScroll(1)),
+        (35, KeyEntry::Disabled),
         (36, KeyEntry::MouseScroll(-1)),
         (53, KeyEntry::MouseButton(0x01)),
         (54, KeyEntry::MouseButton(0x02)),
@@ -615,7 +617,9 @@ mod tests {
     #[test]
     fn baseline_base_matches_capture_byte_for_byte() {
         let pages = baseline_base_keymap();
+        assert_eq!(get_keymap_slot(&pages, 17), [0x05, 0x03, 0x00, 0x00]);
         assert_eq!(get_keymap_slot(&pages, 18), [0x01, 0x03, 0x01, 0x00]);
+        assert_eq!(get_keymap_slot(&pages, 35), [0x05, 0x03, 0x00, 0x00]);
         assert_eq!(get_keymap_slot(&pages, 36), [0x01, 0x03, 0xff, 0x00]);
         assert_eq!(get_keymap_slot(&pages, 53), [0x01, 0x01, 0x01, 0x00]);
         assert_eq!(get_keymap_slot(&pages, 54), [0x01, 0x01, 0x02, 0x00]);

@@ -3,6 +3,7 @@ mod keyboard;
 use crate::daemon::{DaemonController, DaemonSnapshot};
 use crate::layout::{
     KEYS, ZONE_ARROWS, ZONE_MACROS, ZONE_NUMBERS, ZONE_NUMPAD, ZONE_WASD, find_key,
+    firmware_default_hint,
 };
 use crate::profile::{
     ActionSpec, KeymapProfile, MacroStep, Profile, RgbProfile, WheelSlotProfile,
@@ -1563,11 +1564,13 @@ impl App {
 
     fn view_layout_tab(&self) -> Element<'_, Message> {
         let key_info = find_key(self.selected_key).unwrap();
-        let current_binding = self
-            .active_layer_map()
-            .get(key_info.name)
-            .map(|s| s.as_str())
-            .unwrap_or("(firmware default)");
+        let current_binding = match self.active_layer_map().get(key_info.name) {
+            Some(s) => s.clone(),
+            None => match (self.layer, firmware_default_hint(key_info.name)) {
+                (EditLayer::Base, Some(hint)) => format!("(firmware default: {hint})"),
+                _ => "(firmware default)".to_string(),
+            },
+        };
 
         let layer_bar = row![
             text("Active Layer:").size(14),

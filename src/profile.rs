@@ -181,6 +181,8 @@ impl Profile {
         base.insert("m2".into(), "scroll_up".into());
         base.insert("m3".into(), "scroll_down".into());
         base.insert("m4".into(), "mouse_right".into());
+        base.insert("m6".into(), "disabled".into());
+        base.insert("m7".into(), "disabled".into());
         base.insert("m8".into(), "mouse_left".into());
         base.insert("m9".into(), "mouse_middle".into());
         base.insert("left_space".into(), "backspace".into());

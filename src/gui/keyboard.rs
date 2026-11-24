@@ -245,15 +245,19 @@ impl<'a, Message: 'a> canvas::Program<Message> for KeyboardCanvas<'a, Message> {
             let (fill_color, text_color, sub_label) = match self.view_mode {
                 KeyboardViewMode::Layout => {
                     if let Some(act) = binding {
-                        let is_macro = act.to_lowercase().starts_with("macro:");
-                        let fill = if is_macro {
-                            Color::from_rgb8(22, 118, 130)
+                        let lower = act.trim().to_lowercase();
+                        let is_macro = lower.starts_with("macro:");
+                        let is_disabled = matches!(lower.as_str(), "disabled" | "none" | "unassigned" | "noop");
+                        let (fill, text) = if is_disabled {
+                            (Color::from_rgb8(34, 37, 44), Color::from_rgb8(135, 142, 158))
+                        } else if is_macro {
+                            (Color::from_rgb8(22, 118, 130), Color::WHITE)
                         } else if fn_active {
-                            Color::from_rgb8(126, 66, 196)
+                            (Color::from_rgb8(126, 66, 196), Color::WHITE)
                         } else {
-                            Color::from_rgb8(196, 94, 24)
+                            (Color::from_rgb8(196, 94, 24), Color::WHITE)
                         };
-                        (fill, Color::WHITE, Some(short_action_label(act)))
+                        (fill, text, Some(short_action_label(act)))
                     } else if !k.remappable {
                         (Color::from_rgb8(54, 38, 42), Color::from_rgb8(210, 170, 175), None)
                     } else {
