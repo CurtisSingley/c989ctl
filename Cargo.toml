@@ -3,8 +3,22 @@ name = "c989ctl"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["gui"]
+gui = ["dep:iced"]
+
+[[bin]]
+name = "c989ctl"
+path = "src/main.rs"
+
+[[bin]]
+name = "c989ctl-gui"
+path = "src/bin/c989ctl-gui.rs"
+required-features = ["gui"]
+
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 hidapi = { version = "2.6", default-features = false, features = ["linux-native"] }
+iced = { version = "0.13", optional = true, features = ["canvas", "tokio", "tiny-skia"] }
 serde = { version = "1.0", features = ["derive"] }
 toml = "1.1"

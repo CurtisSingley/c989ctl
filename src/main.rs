@@ -1,8 +1,4 @@
-mod daemon;
-mod layout;
-mod profile;
-mod protocol;
-mod transport;
+use c989ctl::{daemon, layout, profile, protocol, transport};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use layout::{KEYS, find_key};

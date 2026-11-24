@@ -189,16 +189,17 @@ pub fn build_fn_keymap(entries: &[(usize, KeyEntry)]) -> [[u8; 64]; KEYMAP_PAGES
     pages
 }
 
-/// User's verified safe baseline base layer (`04 11`).
 pub fn baseline_base_entries() -> Vec<(usize, KeyEntry)> {
     vec![
-        (18, KeyEntry::MouseScroll(1)),    // Copy       -> Scroll Up
-        (36, KeyEntry::MouseScroll(-1)),   // Paste      -> Scroll Down
-        (53, KeyEntry::MouseButton(0x01)), // M3         -> Mouse Left
-        (54, KeyEntry::MouseButton(0x02)), // Cut        -> Mouse Right
-        (71, KeyEntry::MouseButton(0x04)), // M4         -> Mouse Middle
-        (90, KeyEntry::Key { mods: 0, usage: 0x39 }), // Select all -> Caps Lock
-        (94, KeyEntry::Key { mods: 0, usage: 0x2a }), // Left Space -> Backspace
+        (17, KeyEntry::Disabled),
+        (18, KeyEntry::MouseScroll(1)),
+        (35, KeyEntry::Disabled),
+        (36, KeyEntry::MouseScroll(-1)),
+        (53, KeyEntry::MouseButton(0x01)),
+        (54, KeyEntry::MouseButton(0x02)),
+        (71, KeyEntry::MouseButton(0x04)),
+        (90, KeyEntry::Key { mods: 0, usage: 0x39 }),
+        (94, KeyEntry::Key { mods: 0, usage: 0x2a }),
     ]
 }
 
@@ -206,41 +207,40 @@ pub fn baseline_base_keymap() -> [[u8; 64]; KEYMAP_PAGES] {
     build_base_keymap(&baseline_base_entries())
 }
 
-/// User's captured baseline Fn layer (`04 27` from `filtered_apply_default_profile.txt`).
 pub fn baseline_fn_entries() -> Vec<(usize, KeyEntry)> {
     vec![
-        (2, KeyEntry::Consumer(0x0183)),              // F1 -> Media Player
-        (3, KeyEntry::Consumer(0x00cd)),              // F2 -> Play/Pause
-        (4, KeyEntry::Consumer(0x00b7)),              // F3 -> Stop
-        (5, KeyEntry::Consumer(0x00b6)),              // F4 -> Prev Track
-        (6, KeyEntry::Consumer(0x00b5)),              // F5 -> Next Track
-        (39, KeyEntry::MouseButton(0x04)),            // W -> Mouse Middle
-        (40, KeyEntry::Key { mods: 0, usage: 0x52 }), // E -> Up
-        (41, KeyEntry::MouseButton(0x02)),            // R -> Mouse Right
-        (42, KeyEntry::MouseScroll(1)),               // T -> Scroll Up
-        (45, KeyEntry::MouseButton(0x02)),            // I -> Mouse Right
-        (46, KeyEntry::Key { mods: 0, usage: 0x52 }), // O -> Up
-        (47, KeyEntry::MouseButton(0x01)),            // P -> Mouse Left
-        (48, KeyEntry::MouseScroll(1)),               // [ -> Scroll Up
-        (57, KeyEntry::Key { mods: 0, usage: 0x50 }), // S -> Left
-        (58, KeyEntry::Key { mods: 0, usage: 0x51 }), // D -> Down
-        (59, KeyEntry::Key { mods: 0, usage: 0x4f }), // F -> Right
-        (60, KeyEntry::MouseScroll(-1)),              // G -> Scroll Down
-        (61, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])), // H
-        (62, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])), // J
-        (63, KeyEntry::Key { mods: 0, usage: 0x50 }), // K -> Left
-        (64, KeyEntry::Key { mods: 0, usage: 0x51 }), // L -> Down
-        (65, KeyEntry::Key { mods: 0, usage: 0x4f }), // ; -> Right
-        (66, KeyEntry::MouseScroll(-1)),              // ' -> Scroll Down
-        (79, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])), // N
-        (80, KeyEntry::Key { mods: 0, usage: 0x50 }), // M -> Left
-        (81, KeyEntry::Key { mods: 0, usage: 0x51 }), // , -> Down
-        (82, KeyEntry::Key { mods: 0, usage: 0x4f }), // . -> Right
-        (83, KeyEntry::MouseButton(0x04)),            // / -> Mouse Middle
-        (94, KeyEntry::MouseButton(0x01)),            // Left Space -> Mouse Left
-        (109, KeyEntry::MouseButton(0x01)),           // Right Space -> Mouse Left
-        (112, KeyEntry::Key { mods: 0, usage: 0x47 }), // PrtSc -> Scroll Lock
-        (115, KeyEntry::Key { mods: 0, usage: 0x49 }), // Pause -> Insert
+        (2, KeyEntry::Consumer(0x0183)),
+        (3, KeyEntry::Consumer(0x00cd)),
+        (4, KeyEntry::Consumer(0x00b7)),
+        (5, KeyEntry::Consumer(0x00b6)),
+        (6, KeyEntry::Consumer(0x00b5)),
+        (39, KeyEntry::MouseButton(0x04)),
+        (40, KeyEntry::Key { mods: 0, usage: 0x52 }),
+        (41, KeyEntry::MouseButton(0x02)),
+        (42, KeyEntry::MouseScroll(1)),
+        (45, KeyEntry::MouseButton(0x02)),
+        (46, KeyEntry::Key { mods: 0, usage: 0x52 }),
+        (47, KeyEntry::MouseButton(0x01)),
+        (48, KeyEntry::MouseScroll(1)),
+        (57, KeyEntry::Key { mods: 0, usage: 0x50 }),
+        (58, KeyEntry::Key { mods: 0, usage: 0x51 }),
+        (59, KeyEntry::Key { mods: 0, usage: 0x4f }),
+        (60, KeyEntry::MouseScroll(-1)),
+        (61, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])),
+        (62, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])),
+        (63, KeyEntry::Key { mods: 0, usage: 0x50 }),
+        (64, KeyEntry::Key { mods: 0, usage: 0x51 }),
+        (65, KeyEntry::Key { mods: 0, usage: 0x4f }),
+        (66, KeyEntry::MouseScroll(-1)),
+        (79, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])),
+        (80, KeyEntry::Key { mods: 0, usage: 0x50 }),
+        (81, KeyEntry::Key { mods: 0, usage: 0x51 }),
+        (82, KeyEntry::Key { mods: 0, usage: 0x4f }),
+        (83, KeyEntry::MouseButton(0x04)),
+        (94, KeyEntry::MouseButton(0x01)),
+        (109, KeyEntry::MouseButton(0x01)),
+        (112, KeyEntry::Key { mods: 0, usage: 0x47 }),
+        (115, KeyEntry::Key { mods: 0, usage: 0x49 }),
     ]
 }
 
@@ -617,7 +617,9 @@ mod tests {
     #[test]
     fn baseline_base_matches_capture_byte_for_byte() {
         let pages = baseline_base_keymap();
+        assert_eq!(get_keymap_slot(&pages, 17), [0x05, 0x03, 0x00, 0x00]);
         assert_eq!(get_keymap_slot(&pages, 18), [0x01, 0x03, 0x01, 0x00]);
+        assert_eq!(get_keymap_slot(&pages, 35), [0x05, 0x03, 0x00, 0x00]);
         assert_eq!(get_keymap_slot(&pages, 36), [0x01, 0x03, 0xff, 0x00]);
         assert_eq!(get_keymap_slot(&pages, 53), [0x01, 0x01, 0x01, 0x00]);
         assert_eq!(get_keymap_slot(&pages, 54), [0x01, 0x01, 0x02, 0x00]);

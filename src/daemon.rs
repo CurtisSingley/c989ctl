@@ -1,9 +1,10 @@
 use crate::profile::{ActionSpec, MacroStep};
 use crate::transport::open_vendor_interface;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Decode a vendor macro/action trigger packet from Interface 1 (`/dev/hidraw*`).
@@ -25,7 +26,6 @@ fn spawn_detached(program: &str, args: &[String]) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("failed to launch '{program}': {e}"))?;
 
-    // Reap the child in a background thread so we never leave zombies
     thread::spawn(move || {
         let _ = child.wait();
     });
@@ -93,6 +93,156 @@ pub fn execute_action(slot: u8, action: &ActionSpec) -> Result<(), String> {
                 }
             }
             Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DaemonSnapshot {
+    pub running: bool,
+    pub connected_path: Option<String>,
+    pub status_line: String,
+    pub logs: Vec<String>,
+}
+
+/// Cancellable background listener controller (strictly opt-in; off by default).
+pub struct DaemonController {
+    stop: Arc<AtomicBool>,
+    state: Arc<Mutex<DaemonSnapshot>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl DaemonController {
+    pub fn start(profile_name: String, actions: BTreeMap<u8, ActionSpec>) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let state = Arc::new(Mutex::new(DaemonSnapshot {
+            running: true,
+            connected_path: None,
+            status_line: format!("Starting listener for '{profile_name}'..."),
+            logs: vec![format!(
+                "Listener enabled ({} action slot(s) configured)",
+                actions.len()
+            )],
+        }));
+
+        let stop_bg = Arc::clone(&stop);
+        let state_bg = Arc::clone(&state);
+        let actions = Arc::new(actions);
+
+        let handle = thread::spawn(move || {
+            let mut log_ring: VecDeque<String> = VecDeque::with_capacity(32);
+            let push_log = |st: &Arc<Mutex<DaemonSnapshot>>, ring: &mut VecDeque<String>, msg: String| {
+                if ring.len() >= 25 {
+                    ring.pop_front();
+                }
+                ring.push_back(msg);
+                if let Ok(mut guard) = st.lock() {
+                    guard.logs = ring.iter().cloned().collect();
+                }
+            };
+
+            let mut buf = [0u8; 64];
+            while !stop_bg.load(Ordering::Relaxed) {
+                let iface = match open_vendor_interface() {
+                    Ok(h) => {
+                        if let Ok(mut g) = state_bg.lock() {
+                            g.connected_path = Some(h.path.clone());
+                            g.status_line = format!("Listening on {}", h.path);
+                        }
+                        push_log(
+                            &state_bg,
+                            &mut log_ring,
+                            format!("Connected to Interface {} ({})", h.interface_number, h.path),
+                        );
+                        h
+                    }
+                    Err(e) => {
+                        if let Ok(mut g) = state_bg.lock() {
+                            g.connected_path = None;
+                            g.status_line = format!("Waiting for keyboard: {e}");
+                        }
+                        for _ in 0..10 {
+                            if stop_bg.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(200));
+                        }
+                        continue;
+                    }
+                };
+
+                while !stop_bg.load(Ordering::Relaxed) {
+                    match iface.dev.read_timeout(&mut buf, 150) {
+                        Ok(0) => continue,
+                        Ok(n) => {
+                            if let Some(slot) = decode_vendor_trigger(&buf[..n]) {
+                                if let Some(action) = actions.get(&slot).cloned() {
+                                    push_log(
+                                        &state_bg,
+                                        &mut log_ring,
+                                        format!("[slot {slot}] triggered"),
+                                    );
+                                    let st_err = Arc::clone(&state_bg);
+                                    thread::spawn(move || {
+                                        if let Err(err) = execute_action(slot, &action) {
+                                            if let Ok(mut g) = st_err.lock() {
+                                                g.logs.push(format!("[slot {slot}] error: {err}"));
+                                            }
+                                        }
+                                    });
+                                } else {
+                                    push_log(
+                                        &state_bg,
+                                        &mut log_ring,
+                                        format!("[slot {slot}] trigger received (no action bound)"),
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if let Ok(mut g) = state_bg.lock() {
+                                g.connected_path = None;
+                                g.status_line = format!("Disconnected ({e}); retrying...");
+                            }
+                            push_log(&state_bg, &mut log_ring, format!("Disconnected: {e}"));
+                            thread::sleep(Duration::from_millis(500));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Ok(mut g) = state_bg.lock() {
+                g.running = false;
+                g.connected_path = None;
+                g.status_line = "Listener stopped".to_string();
+            }
+        });
+
+        Self {
+            stop,
+            state,
+            handle: Some(handle),
+        }
+    }
+
+    pub fn snapshot(&self) -> DaemonSnapshot {
+        self.state.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    pub fn stop(mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl Drop for DaemonController {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
         }
     }
 }
