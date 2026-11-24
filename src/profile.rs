@@ -173,19 +173,9 @@ pub fn discover_profiles(dir: &Path) -> Vec<(String, PathBuf)> {
 
 impl Profile {
 
-    /// Build a Profile matching the user's exact captured daily default profile
-    /// (`filtered_apply_default_profile.txt`).
+    /// Build the factory default profile (all base keys at firmware default, factory Fn media keys).
     pub fn baseline() -> Self {
-        let mut base = BTreeMap::new();
-        base.insert("m1".into(), "caps".into());
-        base.insert("m2".into(), "scroll_up".into());
-        base.insert("m3".into(), "scroll_down".into());
-        base.insert("m4".into(), "mouse_right".into());
-        base.insert("m6".into(), "disabled".into());
-        base.insert("m7".into(), "disabled".into());
-        base.insert("m8".into(), "mouse_left".into());
-        base.insert("m9".into(), "mouse_middle".into());
-        base.insert("left_space".into(), "backspace".into());
+        let base = BTreeMap::new();
 
         let mut fn_layer = BTreeMap::new();
         fn_layer.insert("f1".into(), "media_player".into());
@@ -193,38 +183,8 @@ impl Profile {
         fn_layer.insert("f3".into(), "stop".into());
         fn_layer.insert("f4".into(), "prev_track".into());
         fn_layer.insert("f5".into(), "next_track".into());
-        fn_layer.insert("w".into(), "mouse_middle".into());
-        fn_layer.insert("e".into(), "up".into());
-        fn_layer.insert("r".into(), "mouse_right".into());
-        fn_layer.insert("t".into(), "scroll_up".into());
-        fn_layer.insert("i".into(), "mouse_right".into());
-        fn_layer.insert("o".into(), "up".into());
-        fn_layer.insert("p".into(), "mouse_left".into());
-        fn_layer.insert("lbracket".into(), "scroll_up".into());
-        fn_layer.insert("s".into(), "left".into());
-        fn_layer.insert("d".into(), "down".into());
-        fn_layer.insert("f".into(), "right".into());
-        fn_layer.insert("g".into(), "scroll_down".into());
-        fn_layer.insert("h".into(), "raw:02000100".into());
-        fn_layer.insert("j".into(), "raw:02000100".into());
-        fn_layer.insert("k".into(), "left".into());
-        fn_layer.insert("l".into(), "down".into());
-        fn_layer.insert("semicolon".into(), "right".into());
-        fn_layer.insert("quote".into(), "scroll_down".into());
-        fn_layer.insert("n".into(), "raw:02000100".into());
-        fn_layer.insert("m".into(), "left".into());
-        fn_layer.insert("comma".into(), "down".into());
-        fn_layer.insert("period".into(), "right".into());
-        fn_layer.insert("slash".into(), "mouse_middle".into());
-        fn_layer.insert("left_space".into(), "mouse_left".into());
-        fn_layer.insert("right_space".into(), "mouse_left".into());
         fn_layer.insert("prtsc".into(), "scrlk".into());
         fn_layer.insert("pause".into(), "insert".into());
-
-        let mut per_key = BTreeMap::new();
-        for k in ["w", "a", "s", "d"] {
-            per_key.insert(k.into(), "#ffffff".into());
-        }
 
         let wheel = baseline_smart_wheel_slots()
             .into_iter()
@@ -242,7 +202,7 @@ impl Profile {
                 brightness: 5,
                 speed: 6,
                 full_spectrum: Some(false),
-                per_key,
+                per_key: BTreeMap::new(),
             }),
             smart_wheel: Some(wheel),
             keymap: Some(KeymapProfile {
@@ -389,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_profiles_parse_and_compile() {
+    fn default_profile_and_actions_parse_and_compile() {
         let def = Profile::load(Path::new("profiles/default.toml")).unwrap();
         let def_c = def.compile().unwrap();
         assert_eq!(def_c.base_keymap.unwrap(), baseline_base_keymap());
@@ -398,27 +358,29 @@ mod tests {
             def_c.smart_wheel.unwrap(),
             build_smart_wheel_page(&baseline_smart_wheel_slots())
         );
-        // Active RGB slot matches filtered_apply_default_profile.txt (static blue #0000ff, bright 5, speed 6)
         let rgb = def_c.rgb.unwrap();
         assert_eq!(
             &rgb[17][0..16],
             &[0x01, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x06, 0x00, 0x00, 0x00, 0xaa, 0x55]
         );
 
-        let test = Profile::load(Path::new("profiles/test.toml")).unwrap();
-        let test_c = test.compile().unwrap();
-        assert!(test_c.base_keymap.is_some());
-        assert!(test_c.rgb.is_some());
-        assert!(test_c.smart_wheel.is_some());
-
-        let macro_prof = Profile::load(Path::new("profiles/macro_test.toml")).unwrap();
-        let macro_c = macro_prof.compile().unwrap();
-        assert!(macro_c.base_keymap.is_some());
-        let actions = macro_prof.parsed_actions().unwrap();
-        assert_eq!(actions.len(), 4);
+        let sample = r#"
+name = "actions_sample"
+[keymap.base]
+m6 = "macro:1"
+m7 = "macro:2"
+[actions.1]
+kind = "launch"
+command = "krita"
+[actions.2]
+kind = "macro"
+steps = [{ text = "hi" }, { delay_ms = 50 }, { key = "Return" }]
+"#;
+        let parsed: Profile = toml::from_str(sample).unwrap();
+        assert!(parsed.compile().unwrap().base_keymap.is_some());
+        let actions = parsed.parsed_actions().unwrap();
+        assert_eq!(actions.len(), 2);
         assert!(actions.contains_key(&1));
         assert!(actions.contains_key(&2));
-        assert!(actions.contains_key(&3));
-        assert!(actions.contains_key(&4));
     }
 }

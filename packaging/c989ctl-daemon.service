@@ -1,0 +1,12 @@
+[Unit]
+Description=Cloud Nine C989 ErgoFSK optional host macro and launcher daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/c989ctl daemon %h/.config/c989ctl/profiles/default.toml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

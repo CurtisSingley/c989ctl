@@ -190,17 +190,7 @@ pub fn build_fn_keymap(entries: &[(usize, KeyEntry)]) -> [[u8; 64]; KEYMAP_PAGES
 }
 
 pub fn baseline_base_entries() -> Vec<(usize, KeyEntry)> {
-    vec![
-        (17, KeyEntry::Disabled),
-        (18, KeyEntry::MouseScroll(1)),
-        (35, KeyEntry::Disabled),
-        (36, KeyEntry::MouseScroll(-1)),
-        (53, KeyEntry::MouseButton(0x01)),
-        (54, KeyEntry::MouseButton(0x02)),
-        (71, KeyEntry::MouseButton(0x04)),
-        (90, KeyEntry::Key { mods: 0, usage: 0x39 }),
-        (94, KeyEntry::Key { mods: 0, usage: 0x2a }),
-    ]
+    Vec::new()
 }
 
 pub fn baseline_base_keymap() -> [[u8; 64]; KEYMAP_PAGES] {
@@ -214,31 +204,6 @@ pub fn baseline_fn_entries() -> Vec<(usize, KeyEntry)> {
         (4, KeyEntry::Consumer(0x00b7)),
         (5, KeyEntry::Consumer(0x00b6)),
         (6, KeyEntry::Consumer(0x00b5)),
-        (39, KeyEntry::MouseButton(0x04)),
-        (40, KeyEntry::Key { mods: 0, usage: 0x52 }),
-        (41, KeyEntry::MouseButton(0x02)),
-        (42, KeyEntry::MouseScroll(1)),
-        (45, KeyEntry::MouseButton(0x02)),
-        (46, KeyEntry::Key { mods: 0, usage: 0x52 }),
-        (47, KeyEntry::MouseButton(0x01)),
-        (48, KeyEntry::MouseScroll(1)),
-        (57, KeyEntry::Key { mods: 0, usage: 0x50 }),
-        (58, KeyEntry::Key { mods: 0, usage: 0x51 }),
-        (59, KeyEntry::Key { mods: 0, usage: 0x4f }),
-        (60, KeyEntry::MouseScroll(-1)),
-        (61, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])),
-        (62, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])),
-        (63, KeyEntry::Key { mods: 0, usage: 0x50 }),
-        (64, KeyEntry::Key { mods: 0, usage: 0x51 }),
-        (65, KeyEntry::Key { mods: 0, usage: 0x4f }),
-        (66, KeyEntry::MouseScroll(-1)),
-        (79, KeyEntry::Raw([0x02, 0x00, 0x01, 0x00])),
-        (80, KeyEntry::Key { mods: 0, usage: 0x50 }),
-        (81, KeyEntry::Key { mods: 0, usage: 0x51 }),
-        (82, KeyEntry::Key { mods: 0, usage: 0x4f }),
-        (83, KeyEntry::MouseButton(0x04)),
-        (94, KeyEntry::MouseButton(0x01)),
-        (109, KeyEntry::MouseButton(0x01)),
         (112, KeyEntry::Key { mods: 0, usage: 0x47 }),
         (115, KeyEntry::Key { mods: 0, usage: 0x49 }),
     ]
@@ -615,32 +580,24 @@ mod tests {
     }
 
     #[test]
-    fn baseline_base_matches_capture_byte_for_byte() {
+    fn baseline_base_is_all_firmware_defaults() {
         let pages = baseline_base_keymap();
-        assert_eq!(get_keymap_slot(&pages, 17), [0x05, 0x03, 0x00, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 18), [0x01, 0x03, 0x01, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 35), [0x05, 0x03, 0x00, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 36), [0x01, 0x03, 0xff, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 53), [0x01, 0x01, 0x01, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 54), [0x01, 0x01, 0x02, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 71), [0x01, 0x01, 0x04, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 90), [0x02, 0x00, 0x39, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 94), [0x02, 0x00, 0x2a, 0x00]);
-        assert_eq!(get_keymap_slot(&pages, 116), [0x00, 0x00, 0x00, 0x00]);
+        for idx in 0..159 {
+            assert_eq!(get_keymap_slot(&pages, idx), [0x00, 0x00, 0x00, 0x00]);
+        }
         assert_eq!(&pages[9][62..64], &[0xaa, 0x55]);
     }
 
     #[test]
-    fn baseline_fn_matches_capture_byte_for_byte() {
-        // Exact 10 pages of `04 27` from references/captures/filtered_apply_default_profile.txt
+    fn baseline_fn_matches_factory_capture_byte_for_byte() {
         let captured = [
             "00000000000000000383010003cd000003b7000003b6000003b50000050300000503000005030000050300000503000005030000050300000000000000000000",
             "00000000000000000000000005030000050300000503000005030000050300000503000005030000050300000503000005030000050300000503000005030000",
-            "05030000050300000503000000000000000000000503000000000000010104000200520001010200010301000503000005030000010102000200520001010100",
-            "010301000503000005030000050300000503000000000000000000000503000005030000020050000200510002004f000103ff00020001000200010002005000",
-            "0200510002004f000103ff0005030000050300000503000005030000000000000000000005030000050300000503000005030000050300000503000002000100",
-            "020050000200510002004f0001010400050300000503000005030000050300000503000000000000000000000503000000000000050300000101010005030000",
-            "00000000050300000503000005030000050300000503000005030000050300000503000005030000050300000000000000000000010101000000000000000000",
+            "05030000050300000503000000000000000000000503000000000000050300000503000005030000050300000503000005030000050300000503000005030000",
+            "05030000050300000503000005030000050300000000000000000000050300000503000005030000050300000503000005030000050300000503000005030000",
+            "05030000050300000503000005030000050300000503000005030000000000000000000005030000050300000503000005030000050300000503000005030000",
+            "05030000050300000503000005030000050300000503000005030000050300000503000000000000000000000503000000000000050300000503000005030000",
+            "00000000050300000503000005030000050300000503000005030000050300000503000005030000050300000000000000000000050300000000000000000000",
             "02004700050300000000000002004900050300000503000005030000050300000503000005030000050300000503000000000000000000000000000000000000",
             "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
             "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa55",

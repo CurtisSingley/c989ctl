@@ -1,0 +1,3 @@
+# Cloud Nine C989 ErgoFSK (VID 0x0c45, PID 0x8006)
+# Numbered < 73 so 73-seat-late.rules applies TAG+="uaccess" ACLs for the active seat.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="8006", TAG+="uaccess"

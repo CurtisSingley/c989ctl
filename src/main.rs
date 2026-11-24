@@ -20,7 +20,7 @@ use transport::{C989, list_interfaces, open_all_interfaces};
 #[command(
     name = "c989ctl",
     version,
-    about = "Native Linux control utility for the Cloud Nine C989 ErgoFSK keyboard"
+    about = "Native Linux control utility for the Cloud Nine C989 ErgoFSK keyboard (Firmware 1.82.0.0)"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -129,9 +129,10 @@ enum Commands {
         timeout: u64,
     },
 
-    /// Flash your exact verified safe baseline (base keymap, Fn keymap, Smart Wheel)
-    RestoreBaseline {
-        /// Also restore baseline static blue RGB lighting
+    /// Flash factory default configuration (base keymap, Fn keymap, Smart Wheel)
+    #[command(alias = "restore-baseline")]
+    RestoreDefaults {
+        /// Also restore default static blue RGB lighting
         #[arg(long)]
         include_rgb: bool,
     },
@@ -142,8 +143,9 @@ enum Commands {
     /// Print all supported RGB modes and Smart Wheel modes
     ListModes,
 
-    /// Print the verified baseline profile in TOML format
-    DumpBaseline,
+    /// Print the factory default profile in TOML format
+    #[command(alias = "dump-baseline")]
+    DumpDefaults,
 
     /// Run background daemon listening for `macro:<slot>` HID triggers (app launcher & macros)
     Daemon {
@@ -241,7 +243,7 @@ fn run() -> Result<(), String> {
             }
             return Ok(());
         }
-        Commands::DumpBaseline => {
+        Commands::DumpDefaults => {
             let toml_str = Profile::baseline().to_toml_string()?;
             print!("{toml_str}");
             return Ok(());
@@ -607,8 +609,8 @@ fn run() -> Result<(), String> {
             }
         }
 
-        Commands::RestoreBaseline { include_rgb } => {
-            println!("Restoring verified safe baseline...");
+        Commands::RestoreDefaults { include_rgb } => {
+            println!("Restoring factory defaults...");
             kb.write_base_keymap(&baseline_base_keymap())?;
             println!("  -> Base keymap (04 11) restored.");
             kb.write_fn_keymap(&baseline_fn_keymap())?;
@@ -620,12 +622,12 @@ fn run() -> Result<(), String> {
                 kb.write_rgb(compiled.rgb.as_ref().unwrap())?;
                 println!("  -> RGB lighting (04 13) restored.");
             }
-            println!("Baseline restore complete.");
+            println!("Factory default restore complete.");
         }
 
         Commands::ListKeys
         | Commands::ListModes
-        | Commands::DumpBaseline
+        | Commands::DumpDefaults
         | Commands::Daemon { .. }
         | Commands::Listen { .. } => {
             unreachable!()

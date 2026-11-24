@@ -2,6 +2,12 @@
 name = "c989ctl"
 version = "0.1.0"
 edition = "2024"
+description = "Native Linux CLI and iced GUI for the Cloud Nine C989 ErgoFSK keyboard (Firmware 1.82.0.0; built and tested on Arch Linux / i3 / X11)"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/curtissingley/c989ctl"
+keywords = ["keyboard", "hid", "linux", "c989", "ergofs"]
+categories = ["hardware-support", "command-line-utilities", "gui"]
 
 [features]
 default = ["gui"]

@@ -288,9 +288,17 @@ impl App {
         let _ = std::fs::create_dir_all(&profiles_dir);
 
         if discover_profiles(&profiles_dir).is_empty() {
-            let repo_list = discover_profiles(&PathBuf::from("profiles"));
-            if !repo_list.is_empty() {
-                for (stem, src) in repo_list {
+            let system_profiles = PathBuf::from("/usr/share/c989ctl/profiles");
+            let seed_list = {
+                let sys = discover_profiles(&system_profiles);
+                if !sys.is_empty() {
+                    sys
+                } else {
+                    discover_profiles(&PathBuf::from("profiles"))
+                }
+            };
+            if !seed_list.is_empty() {
+                for (stem, src) in seed_list {
                     let _ = std::fs::copy(src, profiles_dir.join(format!("{stem}.toml")));
                 }
             } else {
@@ -1426,7 +1434,7 @@ impl App {
             scrollable(prof_list).height(Length::FillPortion(1)),
             new_prof_row,
             prof_actions,
-            button(text("Reset Editor to Baseline").size(12))
+            button(text("Reset Editor to Defaults").size(12))
                 .width(Length::Fill)
                 .style(button::secondary)
                 .on_press(Message::ResetProfileToBaseline),
@@ -1450,7 +1458,7 @@ impl App {
                 .width(Length::Fill)
                 .style(button::primary)
                 .on_press(Message::ApplyFullProfile),
-            button(text("Restore Safe Baseline").size(12))
+            button(text("Restore Factory Defaults").size(12))
                 .width(Length::Fill)
                 .style(button::danger)
                 .on_press(Message::RestoreSafeBaseline),
