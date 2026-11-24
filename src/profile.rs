@@ -6,8 +6,9 @@ use crate::protocol::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
@@ -123,6 +124,58 @@ impl Profile {
     pub fn to_toml_string(&self) -> Result<String, String> {
         toml::to_string_pretty(self).map_err(|e| format!("failed to serialize profile: {e}"))
     }
+
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create directory '{}': {e}", parent.display()))?;
+        }
+        let body = self.to_toml_string()?;
+        fs::write(path, body)
+            .map_err(|e| format!("failed to write profile '{}': {e}", path.display()))
+    }
+}
+
+/// Default XDG profile directory: `~/.config/c989ctl/profiles`.
+pub fn default_profiles_dir() -> PathBuf {
+    if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("c989ctl").join("profiles");
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home)
+                .join(".config")
+                .join("c989ctl")
+                .join("profiles");
+        }
+    }
+    PathBuf::from("profiles")
+}
+
+/// Discover `.toml` profiles in `dir`, returning `(stem, path)` sorted by name.
+pub fn discover_profiles(dir: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("toml") {
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("profile")
+                .to_string();
+            out.push((name, path));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+impl Profile {
 
     /// Build a Profile matching the user's exact captured daily default profile
     /// (`filtered_apply_default_profile.txt`).
